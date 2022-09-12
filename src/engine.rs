@@ -157,77 +157,78 @@ impl Engine {
         &mut self.board[file as usize + rank as usize * 8]
     }
 
-    // TODO: Mabe use just a single function
-    fn check_king_safety(&self, mut on_defender: impl FnMut(Position), mut on_attacker: impl FnMut(Position)) {
+    fn is_king_safe(&self, mut save_defender: impl FnMut(Position)) -> bool {
         let king_position = self.get_king_position();
+        let safe = true;
 
-        self.check_sliders(
-            king_position,
-            &rook_directions,
-            |_| {},
-            |p| {
-                if let Some(piece) = self.get_piece(p) {
-                    if piece.team == self.turn {
-                        on_defender(p);
-                    } else if piece.kind == PieceKind::Rook || piece.kind == PieceKind::Queen {
-                        on_attacker(p);
-                    }
-                }
-            },
-        );
-        self.check_sliders(
-            king_position,
-            &bishop_directions,
-            |_| {},
-            |p| {
-                if let Some(piece) = self.get_piece(p) {
-                    if piece.team == self.turn {
-                        on_defender(p);
-                    } else if piece.kind == PieceKind::Bishop || piece.kind == PieceKind::Queen {
-                        on_attacker(p);
-                    }
-                }
-            },
-        );
+        // Check rooks and queens
+        for direction in rook_directions {
+            let mut current = king_position + direction;
 
-        self.check_jumpers(
-            king_position,
-            &knight_jumps,
-            |_| {},
-            |p| {
-                if let Some(piece) = self.get_piece(p) {
-                    if piece.team != self.turn && piece.kind == PieceKind::Knight {
-                        on_attacker(p);
+            while Engine::in_bounds(current) {
+                if let Some(piece) = self.get_piece(current) {
+                    if piece.team != self.turn && (piece.kind == PieceKind::Queen || piece.kind == PieceKind::Rook) {
+                        safe = false;
+                    } else if piece.team == self.turn {
+                        save_defender(current);
                     }
+                    break;
                 }
-            },
-        );
+                current += direction;
+            }
+        }
 
-        self.check_jumpers(
-            king_position,
-            &king_jumps,
-            |_| {},
-            |p| {
-                if let Some(piece) = self.get_piece(p) {
-                    if piece.team != self.turn && piece.kind == PieceKind::King {
-                        on_attacker(p);
-                    }
-                }
-            },
-        );
+        // Check bishops and queens
+        for direction in bishop_directions {
+            let mut current = king_position + direction;
 
-        self.check_jumpers(
-            king_position,
-            if self.turn == Team::White { &white_pawn_attacks } else { &black_pawn_attacks },
-            |_| {},
-            |p| {
-                if let Some(piece) = self.get_piece(p) {
-                    if piece.team != self.turn && piece.kind == PieceKind::Pawn {
-                        on_attacker(p);
+            while Engine::in_bounds(current) {
+                if let Some(piece) = self.get_piece(current) {
+                    if piece.team != self.turn && (piece.kind == PieceKind::Queen || piece.kind == PieceKind::Bishop) {
+                        safe = false;
+                    } else if piece.team == self.turn {
+                        save_defender(current);
                     }
+                    break;
                 }
-            },
-        );
+                current += direction;
+            }
+        }
+
+        // Check knights
+        for offset in knight_jumps {
+            let current = king_position + offset;
+            if Engine::in_bounds(current) {
+                match self.get_piece(current) {
+                    Some(piece) if piece.team != self.turn && piece.kind == PieceKind::Knight => safe = false,
+                    _ => (),
+                }
+            }
+        }
+
+        // Check enemy king
+        for offset in king_jumps {
+            let current = king_position + offset;
+            if Engine::in_bounds(current) {
+                match self.get_piece(current) {
+                    Some(piece) if piece.team != self.turn && piece.kind == PieceKind::King => safe = false,
+                    _ => (),
+                }
+            }
+        }
+
+        // Check pawns
+        for offset in if self.turn == Team::White { white_pawn_attacks } else { black_pawn_attacks } {
+            let current = king_position + offset;
+            if Engine::in_bounds(current) {
+                match self.get_piece(current) {
+                    Some(piece) if piece.team != self.turn && piece.kind == PieceKind::Pawn => safe = false,
+                    _ => (),
+                }
+            }
+        }
+
+        safe
     }
 
     fn get_king_position(&self) -> Position {
@@ -243,33 +244,68 @@ impl Engine {
         unreachable!()
     }
 
-    fn check_sliders(&self, origin: Position, directions: &[Position], mut on_empty: impl FnMut(Position), mut on_blocked: impl FnMut(Position)) {
+    // TODO: Mave change all this function for iterator over the positions generated and jsut aply filters and such
+    fn get_slider_moves(&self, origin: Position, directions: &[Position], mut save_move: impl FnMut(Move)) {
         for &direction in directions {
             let mut current = origin + direction;
 
             while Engine::in_bounds(current) {
-                if self.get_piece(current).is_some() {
-                    on_blocked(current);
+                let m = Move { from: origin, to: current };
+                if let Some(piece) = self.get_piece(current) {
+                    if piece.team != self.turn {
+                        save_move(m);
+                    }
                     break;
-                } else {
-                    on_empty(current);
                 }
+                save_move(m);
                 current += direction;
             }
         }
     }
 
-    fn check_jumpers(&self, origin: Position, ofsets: &[Position], mut on_empty: impl FnMut(Position), mut on_blocked: impl FnMut(Position)) {
+    fn get_jumper_moves(&self, origin: Position, ofsets: &[Position], mut save_move: impl FnMut(Move)) {
         for &offset in ofsets {
             let current = origin + offset;
             if Engine::in_bounds(current) {
-                if self.get_piece(current).is_some() {
-                    on_blocked(current);
-                    break;
-                } else {
-                    on_empty(current);
+                match self.get_piece(current) {
+                    Some(piece) if piece.team == self.turn => {}
+                    _ => save_move(Move { from: origin, to: current }),
                 }
             }
+        }
+    }
+
+    fn get_pawn_moves(&self, origin: Position, mut save_move: impl FnMut(Move)) {
+        let direction = if self.turn == Team::White { Position(0, -1) } else { Position(0, -1) };
+
+        let move_forward = origin + direction;
+        let move_forward_two = move_forward + direction;
+        let move_left = origin + Position(-1, 0);
+        let move_right = origin + Position(1, 0);
+        let attack_left = move_forward + Position(-1, 0);
+        let attack_right = move_forward + Position(1, 0);
+
+        if self.get_piece(move_forward).is_none() {
+            save_move(Move { from: origin, to: move_forward });
+            if self.is_pawn_first_move(origin) && self.get_piece(move_forward_two).is_none() {
+                save_move(Move { from: origin, to: move_forward_two });
+            }
+        }
+
+        if let Some(piece) = self.get_piece(attack_left) {
+            if piece.team != self.turn {
+                save_move(Move { from: origin, to: attack_left })
+            }
+        } else if self.did_enpasant(move_left) {
+            save_move(Move { from: origin, to: attack_left })
+        }
+
+        if let Some(piece) = self.get_piece(attack_right) {
+            if piece.team != self.turn {
+                save_move(Move { from: origin, to: attack_right })
+            }
+        } else if self.did_enpasant(move_right) {
+            save_move(Move { from: origin, to: attack_right })
         }
     }
 
@@ -283,20 +319,13 @@ impl Engine {
         let mut defenders = HashSet::new();
         defenders.insert(self.get_king_position());
 
-        let mut in_check = false;
-        self.check_king_safety(
-            |_| {},
-            |_| {
-                in_check = true;
-            },
-        );
+        let in_check = !self.is_king_safe(|p| {
+            defenders.insert(p);
+        });
 
-        let is_valid = |m: Move| {
-            // !self.uncovers_king(m)
-            if in_check || defenders.contains(&m.from) {
-                false
-            } else {
-                true
+        let save_if_valid = |m: Move| {
+            if (in_check || defenders.contains(&m.from)) && !self.uncovers_king(m) {
+                valid_moves.push(m);
             }
         };
 
@@ -309,55 +338,15 @@ impl Engine {
                         continue;
                     }
 
-                    let on_empty = |p: Position| {
-                        let m = Move { from: piece_position, to: p };
-                        if is_valid(m) {
-                            valid_moves.push(m);
-                        }
-                    };
-                    let on_blocked = |p: Position| {
-                        let m = Move { from: piece_position, to: p };
-                        if let Some(piece) = self.get_piece(p) {
-                            if piece.team != self.turn && is_valid(m) {
-                                valid_moves.push(m);
-                            }
-                        }
-                    };
                     match piece.kind {
                         PieceKind::Queen => {
-                            self.check_sliders(piece_position, &rook_directions, on_empty, on_blocked);
-                            self.check_sliders(piece_position, &bishop_directions, on_empty, on_blocked);
+                            self.get_slider_moves(piece_position, &rook_directions, save_if_valid);
+                            self.get_slider_moves(piece_position, &bishop_directions, save_if_valid);
                         }
-                        PieceKind::Rook => self.check_sliders(piece_position, &rook_directions, on_empty, on_blocked),
-                        PieceKind::Bishop => self.check_sliders(piece_position, &bishop_directions, on_empty, on_blocked),
-                        PieceKind::Knight => self.check_jumpers(piece_position, &knight_jumps, on_empty, on_blocked),
-                        PieceKind::Pawn => {
-                            // Moves
-                            if self.is_pawn_first_move(piece_position) {
-                                self.check_jumpers(
-                                    piece_position,
-                                    &if piece.team == Team::White { white_pawn_extended_jumps } else { black_pawn_extended_jumps },
-                                    on_empty,
-                                    |_| {},
-                                )
-                            } else {
-                                self.check_jumpers(piece_position, &if piece.team == Team::White { white_pawn_jumps } else { black_pawn_jumps }, on_empty, |_| {})
-                            }
-                            // Attack
-                            self.check_jumpers(piece_position, &if piece.team == Team::White { white_pawn_attacks } else { black_pawn_attacks }, |_| {}, on_blocked);
-
-                            // En passant
-                            let add_if_enpasant = |mut p: Position| {
-                                if self.did_enpasant(p) {
-                                    let offset = if self.turn == Team::White { Position(0, -1) } else { Position(0, 1) };
-                                    p += offset;
-                                    if is_valid(Move { from: piece_position, to: p }) {
-                                        valid_moves.push(Move { from: piece_position, to: p });
-                                    }
-                                }
-                            };
-                            self.check_jumpers(piece_position, &pawn_enpasant_attacks, |_| {}, add_if_enpasant)
-                        }
+                        PieceKind::Rook => self.get_slider_moves(piece_position, &rook_directions, save_if_valid),
+                        PieceKind::Bishop => self.get_slider_moves(piece_position, &bishop_directions, save_if_valid),
+                        PieceKind::Knight => self.get_jumper_moves(piece_position, &knight_jumps, save_if_valid),
+                        PieceKind::Pawn => self.get_pawn_moves(piece_position, save_if_valid),
                         PieceKind::King => {}
                     }
                 }
@@ -386,7 +375,7 @@ impl Engine {
         let undo = self.make_move(m);
 
         // Ckecks the king's safety
-        self.check_king_safety(|_| {}, |_| is_invalid = true);
+        let is_invalid = !self.is_king_safe(|_| {});
 
         // Restores the board
         self.undo_move(undo);
