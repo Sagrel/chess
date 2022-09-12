@@ -33,7 +33,7 @@ fn main() {
                 let movement = Move { from: selected, to: engine.hovered };
                 if valid_moves.iter().any(|m| m == &movement) {
                     engine.make_move(movement);
-                    valid_moves = engine.calculate_valid_moves();
+                    valid_moves = engine.calculate_valid_moves();                    
                 }
             }
         }

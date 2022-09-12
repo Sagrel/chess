@@ -79,6 +79,7 @@ pub struct Move {
     pub to: Position,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum UndoAction {
     Move(Move, Option<Piece>),
     Enpasant(Move),
@@ -87,7 +88,7 @@ pub enum UndoAction {
 }
 
 pub struct Engine {
-    board: [Option<Piece>; 8 * 8],
+    pub board: [Option<Piece>; 8 * 8],
     history: Vec<Move>,
     pub selected: Option<Position>,
     pub hovered: Position,
@@ -343,6 +344,26 @@ impl Engine {
     pub fn calculate_valid_moves(&mut self) -> Vec<Move> {
         let mut valid_moves = Vec::new();
 
+        // TODO review
+        // TODO Maybe we can create a big iterator that generates all the posible moves, and only filter that one to check everything is valid, this might be a crazy idea
+        /*
+        let origin = Position(0, 0);
+        knight_jumps
+        .iter()
+        .map(|&p| p + origin)
+        .filter(|&p| Engine::in_bounds(p))
+        .take_while(|&p| {
+            if let Some(piece) = self.get_piece(p) {
+                valid_moves.push(Move { from: origin, to: p });
+                true
+             } else {
+                 false
+             }
+         })
+         .for_each(|p| valid_moves.push(Move { from: origin, to: p }));
+         todo!();
+         */
+
         let mut defenders = HashSet::new();
         defenders.insert(self.get_king_position());
 
@@ -374,7 +395,7 @@ impl Engine {
                         PieceKind::Knight => self.get_jumper_moves(piece_position, &knight_jumps, &needs_checking, &mut save_move),
                         PieceKind::Pawn => self.get_pawn_moves(piece_position, &needs_checking, &mut save_move),
                         PieceKind::King => {
-                            self.get_jumper_moves(piece_position, &knight_jumps, &needs_checking, &mut save_move)
+                            self.get_jumper_moves(piece_position, &king_jumps, &needs_checking, &mut save_move)
                             // TODO: Castling
                         }
                     }
@@ -398,6 +419,7 @@ impl Engine {
     }
 
     fn uncovers_king(&mut self, m: Move) -> bool {
+        let board = self.board;
         // Set up new board
         let undo = self.make_move(m);
 
@@ -407,6 +429,10 @@ impl Engine {
         // Restores the board
         self.undo_move(undo);
 
+        // TODO: Remove when done with debugin
+        if board != self.board {
+            println!("That is bad, move {m:?}, {undo:?}");
+        }
         is_invalid
     }
 
@@ -475,6 +501,7 @@ impl Engine {
             }
         };
         self.toggle_turn();
+        self.history.pop();
     }
 
     fn toggle_turn(&mut self) {
