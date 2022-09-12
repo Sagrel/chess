@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, mem::needs_drop};
 
 use derive_more::{Add, AddAssign};
 use raylib::{
@@ -48,7 +48,7 @@ const black_pawn_attacks: [Position; 2] = [Position(-1, 1), Position(1, 1)];
 const pawn_enpasant_attacks: [Position; 2] = [Position(-1, 0), Position(1, 0)];
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum PieceKind {
+pub enum PieceKind {
     Pawn,
     Rook,
     Knight,
@@ -58,7 +58,7 @@ enum PieceKind {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Team {
+pub enum Team {
     White,
     Black,
 }
@@ -75,8 +75,8 @@ pub struct Piece {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Move {
-    from: Position,
-    to: Position,
+    pub from: Position,
+    pub to: Position,
 }
 
 pub enum UndoAction {
@@ -110,9 +110,9 @@ impl Engine {
             moving: false,
             turn: Team::White,
             sprite_sheet: rl.load_texture(thread, "assets/Chess_Pieces_Sprite.png").expect("Could not load piece textures"),
-            move_sound: Sound::load_sound("assets/move.mp3").expect("Could not load move sound"),
-            capture_sound: Sound::load_sound("assets/capture.mp3").expect("Could not load capture sound"),
             speakers: RaylibAudio::init_audio_device(),
+            capture_sound: Sound::load_sound("assets/capture.mp3").expect("Could not load capture sound"),
+            move_sound: Sound::load_sound("assets/move.mp3").expect("Could not load move sound"),
         };
 
         engine.load_position_from_fen(starting_position);
@@ -159,7 +159,7 @@ impl Engine {
 
     fn is_king_safe(&self, mut save_defender: impl FnMut(Position)) -> bool {
         let king_position = self.get_king_position();
-        let safe = true;
+        let mut safe = true;
 
         // Check rooks and queens
         for direction in rook_directions {
@@ -244,39 +244,47 @@ impl Engine {
         unreachable!()
     }
 
-    // TODO: Mave change all this function for iterator over the positions generated and jsut aply filters and such
-    fn get_slider_moves(&self, origin: Position, directions: &[Position], mut save_move: impl FnMut(Move)) {
+    // TODO: Maybe change all this function for iterator over the positions generated and jsut aply filters and such
+    fn get_slider_moves(&mut self, origin: Position, directions: &[Position], needs_checking: &impl Fn(Move) -> bool, save_move: &mut impl FnMut(Move)) {
         for &direction in directions {
             let mut current = origin + direction;
 
             while Engine::in_bounds(current) {
                 let m = Move { from: origin, to: current };
                 if let Some(piece) = self.get_piece(current) {
-                    if piece.team != self.turn {
+                    if piece.team != self.turn && (!needs_checking(m) || !self.uncovers_king(m)) {
                         save_move(m);
                     }
                     break;
                 }
-                save_move(m);
+                if !needs_checking(m) || !self.uncovers_king(m) {
+                    save_move(m);
+                }
+
                 current += direction;
             }
         }
     }
 
-    fn get_jumper_moves(&self, origin: Position, ofsets: &[Position], mut save_move: impl FnMut(Move)) {
+    fn get_jumper_moves(&mut self, origin: Position, ofsets: &[Position], needs_checking: &impl Fn(Move) -> bool, save_move: &mut impl FnMut(Move)) {
         for &offset in ofsets {
             let current = origin + offset;
             if Engine::in_bounds(current) {
                 match self.get_piece(current) {
                     Some(piece) if piece.team == self.turn => {}
-                    _ => save_move(Move { from: origin, to: current }),
+                    _ => {
+                        let m = Move { from: origin, to: current };
+                        if !needs_checking(m) || !self.uncovers_king(m) {
+                            save_move(m);
+                        }
+                    }
                 }
             }
         }
     }
 
-    fn get_pawn_moves(&self, origin: Position, mut save_move: impl FnMut(Move)) {
-        let direction = if self.turn == Team::White { Position(0, -1) } else { Position(0, -1) };
+    fn get_pawn_moves(&mut self, origin: Position, needs_checking: &impl Fn(Move) -> bool, save_move: &mut impl FnMut(Move)) {
+        let direction = if self.turn == Team::White { Position(0, -1) } else { Position(0, 1) };
 
         let move_forward = origin + direction;
         let move_forward_two = move_forward + direction;
@@ -288,29 +296,48 @@ impl Engine {
         if self.get_piece(move_forward).is_none() {
             save_move(Move { from: origin, to: move_forward });
             if self.is_pawn_first_move(origin) && self.get_piece(move_forward_two).is_none() {
-                save_move(Move { from: origin, to: move_forward_two });
+                let m = Move { from: origin, to: move_forward_two };
+                if !needs_checking(m) || !self.uncovers_king(m) {
+                    save_move(m);
+                }
             }
         }
 
-        if let Some(piece) = self.get_piece(attack_left) {
-            if piece.team != self.turn {
-                save_move(Move { from: origin, to: attack_left })
+        if Engine::in_bounds(attack_left) {
+            if let Some(piece) = self.get_piece(attack_left) {
+                if piece.team != self.turn {
+                    let m = Move { from: origin, to: attack_left };
+                    if !needs_checking(m) || !self.uncovers_king(m) {
+                        save_move(m);
+                    }
+                }
+            } else if self.did_enpasant(move_left) {
+                let m = Move { from: origin, to: attack_left };
+                if !needs_checking(m) || !self.uncovers_king(m) {
+                    save_move(m);
+                }
             }
-        } else if self.did_enpasant(move_left) {
-            save_move(Move { from: origin, to: attack_left })
         }
 
-        if let Some(piece) = self.get_piece(attack_right) {
-            if piece.team != self.turn {
-                save_move(Move { from: origin, to: attack_right })
+        if Engine::in_bounds(attack_right) {
+            if let Some(piece) = self.get_piece(attack_right) {
+                if piece.team != self.turn {
+                    let m = Move { from: origin, to: attack_right };
+                    if !needs_checking(m) || !self.uncovers_king(m) {
+                        save_move(m);
+                    }
+                }
+            } else if self.did_enpasant(move_right) {
+                let m = Move { from: origin, to: attack_right };
+                if !needs_checking(m) || !self.uncovers_king(m) {
+                    save_move(m);
+                }
             }
-        } else if self.did_enpasant(move_right) {
-            save_move(Move { from: origin, to: attack_right })
         }
     }
 
     fn in_bounds(Position(file, rank): Position) -> bool {
-        file >= 0 && file < 8 && rank >= 0 && rank < 8
+        (0..8).contains(&file) && (0..8).contains(&rank)
     }
 
     pub fn calculate_valid_moves(&mut self) -> Vec<Move> {
@@ -323,10 +350,9 @@ impl Engine {
             defenders.insert(p);
         });
 
-        let save_if_valid = |m: Move| {
-            if (in_check || defenders.contains(&m.from)) && !self.uncovers_king(m) {
-                valid_moves.push(m);
-            }
+        let needs_checking = |m: Move| in_check || defenders.contains(&m.from);
+        let mut save_move = |m: Move| {
+            valid_moves.push(m);
         };
 
         for file in 0..8 {
@@ -340,14 +366,17 @@ impl Engine {
 
                     match piece.kind {
                         PieceKind::Queen => {
-                            self.get_slider_moves(piece_position, &rook_directions, save_if_valid);
-                            self.get_slider_moves(piece_position, &bishop_directions, save_if_valid);
+                            self.get_slider_moves(piece_position, &rook_directions, &needs_checking, &mut save_move);
+                            self.get_slider_moves(piece_position, &bishop_directions, &needs_checking, &mut save_move);
                         }
-                        PieceKind::Rook => self.get_slider_moves(piece_position, &rook_directions, save_if_valid),
-                        PieceKind::Bishop => self.get_slider_moves(piece_position, &bishop_directions, save_if_valid),
-                        PieceKind::Knight => self.get_jumper_moves(piece_position, &knight_jumps, save_if_valid),
-                        PieceKind::Pawn => self.get_pawn_moves(piece_position, save_if_valid),
-                        PieceKind::King => {}
+                        PieceKind::Rook => self.get_slider_moves(piece_position, &rook_directions, &needs_checking, &mut save_move),
+                        PieceKind::Bishop => self.get_slider_moves(piece_position, &bishop_directions, &needs_checking, &mut save_move),
+                        PieceKind::Knight => self.get_jumper_moves(piece_position, &knight_jumps, &needs_checking, &mut save_move),
+                        PieceKind::Pawn => self.get_pawn_moves(piece_position, &needs_checking, &mut save_move),
+                        PieceKind::King => {
+                            self.get_jumper_moves(piece_position, &knight_jumps, &needs_checking, &mut save_move)
+                            // TODO: Castling
+                        }
                     }
                 }
             }
@@ -369,8 +398,6 @@ impl Engine {
     }
 
     fn uncovers_king(&mut self, m: Move) -> bool {
-        let mut is_invalid = false;
-
         // Set up new board
         let undo = self.make_move(m);
 
@@ -380,7 +407,7 @@ impl Engine {
         // Restores the board
         self.undo_move(undo);
 
-        return is_invalid;
+        is_invalid
     }
 
     pub fn make_move(&mut self, m: Move) -> UndoAction {
@@ -408,7 +435,7 @@ impl Engine {
             } else {
                 *self.get_piece_mut(Position(5, m.to.1)) = self.get_piece_mut(Position(7, m.to.1)).take();
             }
-            UndoAction::Move(m, target)
+            UndoAction::Castle(m)
         } else {
             UndoAction::Move(m, target)
         };

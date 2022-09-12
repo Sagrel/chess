@@ -3,10 +3,12 @@ mod engine;
 use engine::*;
 
 fn main() {
-    let (mut rl, thread) = raylib::init().size(640, 480).title("Hello, World").build();
+    let (mut rl, thread) = raylib::init().size(piece_size * 8, piece_size * 8).title("Chess").build();
 
     let mut engine = Engine::new(&mut rl, &thread);
     let mut valid_moves = engine.calculate_valid_moves();
+
+    
 
     while !rl.window_should_close() {
         let mut d = rl.begin_drawing(&thread);
@@ -29,7 +31,7 @@ fn main() {
             engine.moving = false;
             if let Some(selected) = engine.selected {
                 let movement = Move { from: selected, to: engine.hovered };
-                if valid_moves.iter().find(|m| *m == &movement).is_some() {
+                if valid_moves.iter().any(|m| m == &movement) {
                     engine.make_move(movement);
                     valid_moves = engine.calculate_valid_moves();
                 }
