@@ -86,7 +86,7 @@ pub enum UndoAction {
     Move(Move, Option<Piece>),
     Enpasant(Move),
     Castle(Move),
-    Promotion(Move),
+    Promotion(Move, Option<Piece>),
 }
 
 pub struct Engine {
@@ -199,7 +199,7 @@ impl Engine {
         }
     }
 
-    fn pawn_moves(&mut self, origin: Position, save_move: &mut impl FnMut(Move, &Option<Piece>)) {
+    fn pawn_moves(&self, origin: Position, save_move: &mut impl FnMut(Move, &Option<Piece>)) {
         let direction = if self.turn == Team::White { Position(0, -1) } else { Position(0, 1) };
 
         let move_forward = origin + direction;
@@ -331,7 +331,7 @@ impl Engine {
                                 && self.get_piece(right1).is_none()
                                 && Engine::in_bounds(right2)
                                 && self.get_piece(right2).is_none()
-                                && !self.history.iter().any(|m| m.from == right_rook)
+                                && !self.history.iter().any(|m| m.from == right_rook || m.to == piece_position)
                                 && !self.uncovers_king(Move { from: piece_position, to: right1 })
                                 && !self.uncovers_king(Move { from: piece_position, to: right2 })
                             {
@@ -344,7 +344,7 @@ impl Engine {
                                 && self.get_piece(left2).is_none()
                                 && Engine::in_bounds(left3)
                                 && self.get_piece(left3).is_none()
-                                && !self.history.iter().any(|m| m.from == left_rook)
+                                && !self.history.iter().any(|m| m.from == left_rook || m.to == piece_position)
                                 && !self.uncovers_king(Move { from: piece_position, to: left1 })
                                 && !self.uncovers_king(Move { from: piece_position, to: left2 })
                             {
@@ -379,20 +379,17 @@ impl Engine {
     }
 
     fn uncovers_king(&mut self, m: Move) -> bool {
-        let board = self.board;
         // Set up new board
         let undo = self.make_move(m);
+        self.toggle_turn();
 
         // Ckecks the king's safety
         let is_invalid = !self.is_king_safe(|_| {});
 
         // Restores the board
         self.undo_move(undo);
+        self.toggle_turn();
 
-        // TODO: Remove when done with debugin
-        if board != self.board {
-            println!("That is bad, move {m:?}, {undo:?}");
-        }
         is_invalid
     }
 
@@ -407,14 +404,16 @@ impl Engine {
         } else {
             self.speakers.play_sound(&self.move_sound);
         }
+        self.toggle_turn();
+        self.history.push(m);
 
         let undo_action = if original.kind == PieceKind::Pawn && m.to.0 != m.from.0 && target.is_none() {
             self.get_piece_mut(Position(m.to.0, m.from.1)).take();
             UndoAction::Enpasant(m)
         } else if original.kind == PieceKind::Pawn && (m.to.1 == 0 || m.to.1 == 7) {
             // TODO Request the user
-            self.get_piece_mut(m.from).unwrap().kind = PieceKind::Queen;
-            UndoAction::Promotion(m)
+            self.get_piece_mut(m.from).as_mut().unwrap().kind = PieceKind::Queen;
+            UndoAction::Promotion(m, target)
         } else if original.kind == PieceKind::King && (m.to.0 - m.from.0).abs() > 1 {
             if (m.to.0 - m.from.0).is_negative() {
                 *self.get_piece_mut(Position(3, m.to.1)) = self.get_piece_mut(Position(0, m.to.1)).take();
@@ -427,8 +426,6 @@ impl Engine {
         };
 
         *self.get_piece_mut(m.to) = self.get_piece_mut(m.from).take();
-
-        self.toggle_turn();
 
         undo_action
     }
@@ -443,7 +440,7 @@ impl Engine {
                 *self.get_piece_mut(m.from) = self.get_piece_mut(m.to).take();
                 *self.get_piece_mut(Position(m.to.0, m.from.1)) = Some(Piece {
                     kind: PieceKind::Pawn,
-                    team: self.get_piece(m.from).unwrap().team,
+                    team: if self.get_piece(m.from).unwrap().team == Team::White { Team::Black } else { Team::White },
                 });
             }
             UndoAction::Castle(m) => {
@@ -454,12 +451,15 @@ impl Engine {
                     *self.get_piece_mut(Position(7, m.to.1)) = self.get_piece_mut(Position(5, m.to.1)).take();
                 }
             }
-            UndoAction::Promotion(m) => {
+            UndoAction::Promotion(m, p) => {
                 let mut piece = self.get_piece_mut(m.to).take().unwrap();
                 piece.kind = PieceKind::Pawn;
                 *self.get_piece_mut(m.from) = Some(piece);
+                *self.get_piece_mut(m.to) = p;
             }
         };
+
+        // TODO Play undo sound
         self.toggle_turn();
         self.history.pop();
     }
