@@ -376,14 +376,14 @@ impl Engine {
     }
 
     fn uncovers_king(&mut self, m: Move) -> bool {
-        // Set up new board, order is important
+        // Set up new board
         let undo = self.make_move(m);
         self.toggle_turn();
 
         // Ckecks the king's safety
         let is_invalid = !self.is_king_safe(|_| {});
 
-        // Restores the board order is important
+        // Restores the board
         self.undo_move(undo);
         self.toggle_turn();
 
@@ -511,16 +511,7 @@ impl Engine {
         for file in 0..8 {
             for rank in 0..8 {
                 if let Some(piece) = self.get_piece(Position(file, rank)) {
-                    let x = PIECE_SIZE
-                        * match piece.kind {
-                            PieceKind::Pawn => 5,
-                            PieceKind::Rook => 4,
-                            PieceKind::Knight => 3,
-                            PieceKind::Bishop => 2,
-                            PieceKind::Queen => 1,
-                            PieceKind::King => 0,
-                        };
-                    let y = if piece.team == Team::White { 0 } else { PIECE_SIZE };
+                    let (x, y) = Engine::sprite_ofset(piece);
 
                     let color = if self.selected == Some(Position(file, rank)) && self.moving { TRANSPARENT } else { WHITE };
                     d.draw_texture_rec(
@@ -535,6 +526,20 @@ impl Engine {
                 }
             }
         }
+    }
+
+    fn sprite_ofset(piece: &Piece) -> (f32, f32) {
+        let x = PIECE_SIZE
+            * match piece.kind {
+                PieceKind::Pawn => 5,
+                PieceKind::Rook => 4,
+                PieceKind::Knight => 3,
+                PieceKind::Bishop => 2,
+                PieceKind::Queen => 1,
+                PieceKind::King => 0,
+            };
+        let y = if piece.team == Team::White { 0 } else { PIECE_SIZE };
+        (x as f32, y as f32)
     }
 
     fn draw_active_piece(&self, d: &mut RaylibDrawHandle, valid_moves: &[Move]) {
@@ -556,18 +561,8 @@ impl Engine {
                     x: mp.x - (PIECE_SIZE / 2) as f32,
                     y: mp.y - (PIECE_SIZE / 2) as f32,
                 };
-                let piece = self.get_piece(selected).expect("Fuck");
-                // TODO: Extract the match instead of repeating it
-                let x = PIECE_SIZE
-                    * match piece.kind {
-                        PieceKind::Pawn => 5,
-                        PieceKind::Rook => 4,
-                        PieceKind::Knight => 3,
-                        PieceKind::Bishop => 2,
-                        PieceKind::Queen => 1,
-                        PieceKind::King => 0,
-                    };
-                let y = if piece.team == Team::White { 0 } else { PIECE_SIZE };
+
+                let (x, y) = Engine::sprite_ofset(self.get_piece(selected).as_ref().unwrap());
                 d.draw_texture_rec(&self.sprite_sheet, Rectangle::new(x as f32, y as f32, PIECE_SIZE as f32, PIECE_SIZE as f32), position, WHITE);
             }
         }
