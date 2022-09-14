@@ -9,17 +9,16 @@ use raylib::{
     RaylibHandle, RaylibThread,
 };
 
-const transparent: Color = Color { r: 255, g: 255, b: 255, a: 100 };
-const white: Color = Color { r: 255, g: 255, b: 255, a: 255 };
-const black: Color = Color { r: 0, g: 0, b: 0, a: 255 };
-const light: Color = Color { r: 235, g: 210, b: 183, a: 255 };
-const dark: Color = Color { r: 148, g: 102, b: 83, a: 255 };
-const green: Color = Color { r: 130, g: 151, b: 105, a: 180 };
-pub const piece_size: i32 = 45;
-const starting_position: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-const rook_directions: [Position; 4] = [Position(-1, 0), Position(1, 0), Position(0, 1), Position(0, -1)];
-const bishop_directions: [Position; 4] = [Position(1, 1), Position(1, -1), Position(-1, 1), Position(-1, -1)];
-const knight_jumps: [Position; 8] = [
+const TRANSPARENT: Color = Color { r: 255, g: 255, b: 255, a: 100 };
+const WHITE: Color = Color { r: 255, g: 255, b: 255, a: 255 };
+const LIGHT: Color = Color { r: 235, g: 210, b: 183, a: 255 };
+const DARK: Color = Color { r: 148, g: 102, b: 83, a: 255 };
+const GREEN: Color = Color { r: 130, g: 151, b: 105, a: 180 };
+pub const PIECE_SIZE: i32 = 45;
+const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+const ROOK_DIRECTIONS: [Position; 4] = [Position(-1, 0), Position(1, 0), Position(0, 1), Position(0, -1)];
+const BISHOP_DIRECTIONS: [Position; 4] = [Position(1, 1), Position(1, -1), Position(-1, 1), Position(-1, -1)];
+const KNIGHT_JUMPS: [Position; 8] = [
     Position(1, 2),
     Position(-1, 2),
     Position(1, -2),
@@ -29,7 +28,7 @@ const knight_jumps: [Position; 8] = [
     Position(-2, 1),
     Position(-2, -1),
 ];
-const king_jumps: [Position; 8] = [
+const KING_JUMPS: [Position; 8] = [
     Position(1, 0),
     Position(1, -1),
     Position(0, -1),
@@ -39,8 +38,8 @@ const king_jumps: [Position; 8] = [
     Position(0, 1),
     Position(1, 1),
 ];
-const white_pawn_attacks: [Position; 2] = [Position(-1, -1), Position(1, -1)];
-const black_pawn_attacks: [Position; 2] = [Position(-1, 1), Position(1, 1)];
+const WHITE_PAWN_ATTACKS: [Position; 2] = [Position(-1, -1), Position(1, -1)];
+const BLACK_PAWN_ATTACKS: [Position; 2] = [Position(-1, 1), Position(1, 1)];
 
 impl Mul<i32> for Position {
     type Output = Position;
@@ -96,6 +95,8 @@ pub struct Engine {
     pub hovered: Position,
     pub moving: bool,
     pub turn: Team,
+    white_king_position: Position,
+    black_king_position: Position,
 
     sprite_sheet: Texture2D,
     move_sound: Sound,
@@ -112,13 +113,15 @@ impl Engine {
             hovered: Position(0, 0),
             moving: false,
             turn: Team::White,
+            white_king_position: Position(4, 7),
+            black_king_position: Position(4, 0),
             sprite_sheet: rl.load_texture(thread, "assets/Chess_Pieces_Sprite.png").expect("Could not load piece textures"),
             speakers: RaylibAudio::init_audio_device(),
             capture_sound: Sound::load_sound("assets/capture.mp3").expect("Could not load capture sound"),
             move_sound: Sound::load_sound("assets/move.mp3").expect("Could not load move sound"),
         };
 
-        engine.load_position_from_fen(starting_position);
+        engine.load_position_from_fen(STARTING_POSITION);
 
         engine
     }
@@ -161,25 +164,11 @@ impl Engine {
     }
 
     #[profiling::function]
-    fn get_king_position(&self) -> Position {
-        for file in 0..8 {
-            for rank in 0..8 {
-                if let Some(piece) = self.get_piece(Position(file, rank)).as_ref() {
-                    if piece.kind == PieceKind::King && piece.team == self.turn {
-                        return Position(file, rank);
-                    }
-                }
-            }
-        }
-        unreachable!()
-    }
-
-    #[profiling::function]
     fn slider_moves(&self, origin: Position, directions: &[Position], save_move: &mut impl FnMut(Move, &Option<Piece>)) {
         for &direction in directions {
             let mut current = origin + direction;
 
-            while Engine::in_bounds(current) {
+            while Engine::in_bounds(&current) {
                 let piece = self.get_piece(current);
                 save_move(Move { from: origin, to: current }, piece);
 
@@ -196,7 +185,7 @@ impl Engine {
     fn jumper_moves(&self, origin: Position, ofsets: &[Position], save_move: &mut impl FnMut(Move, &Option<Piece>)) {
         for &offset in ofsets {
             let current = origin + offset;
-            if Engine::in_bounds(current) {
+            if Engine::in_bounds(&current) {
                 save_move(Move { from: origin, to: current }, self.get_piece(current));
             }
         }
@@ -221,7 +210,7 @@ impl Engine {
             }
         }
 
-        if Engine::in_bounds(attack_left) {
+        if Engine::in_bounds(&attack_left) {
             if let Some(piece) = self.get_piece(attack_left) {
                 if piece.team != self.turn {
                     let m = Move { from: origin, to: attack_left };
@@ -233,7 +222,7 @@ impl Engine {
             }
         }
 
-        if Engine::in_bounds(attack_right) {
+        if Engine::in_bounds(&attack_right) {
             if let Some(piece) = self.get_piece(attack_right) {
                 if piece.team != self.turn {
                     let m = Move { from: origin, to: attack_right };
@@ -250,36 +239,36 @@ impl Engine {
     fn is_king_safe(&self, mut save_defender: impl FnMut(Position)) -> bool {
         let mut safe = true;
 
-        let position = self.get_king_position();
+        let position = if self.turn == Team::White { self.white_king_position } else { self.black_king_position };
 
         // Check rooks and queens
-        self.slider_moves(position, &rook_directions, &mut |m: Move, piece: &Option<Piece>| match piece {
+        self.slider_moves(position, &ROOK_DIRECTIONS, &mut |m: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team == self.turn => save_defender(m.to),
             Some(piece) if piece.team != self.turn && (piece.kind == PieceKind::Rook || piece.kind == PieceKind::Queen) => safe = false,
             _ => (),
         });
 
         // Check bishops and queens
-        self.slider_moves(position, &bishop_directions, &mut |m: Move, piece: &Option<Piece>| match piece {
+        self.slider_moves(position, &BISHOP_DIRECTIONS, &mut |m: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team == self.turn => save_defender(m.to),
             Some(piece) if piece.team != self.turn && (piece.kind == PieceKind::Bishop || piece.kind == PieceKind::Queen) => safe = false,
             _ => (),
         });
 
         // Check knights
-        self.jumper_moves(position, &knight_jumps, &mut |_: Move, piece: &Option<Piece>| match piece {
+        self.jumper_moves(position, &KNIGHT_JUMPS, &mut |_: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team != self.turn && piece.kind == PieceKind::Knight => safe = false,
             _ => (),
         });
 
         // Check enemy king
-        self.jumper_moves(position, &king_jumps, &mut |_: Move, piece: &Option<Piece>| match piece {
+        self.jumper_moves(position, &KING_JUMPS, &mut |_: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team != self.turn && piece.kind == PieceKind::King => safe = false,
             _ => (),
         });
 
         // Check pawns
-        let moves = &if self.turn == Team::White { white_pawn_attacks } else { black_pawn_attacks };
+        let moves = &if self.turn == Team::White { WHITE_PAWN_ATTACKS } else { BLACK_PAWN_ATTACKS };
         self.jumper_moves(position, moves, &mut |_: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team != self.turn && piece.kind == PieceKind::Pawn => safe = false,
             _ => (),
@@ -293,7 +282,7 @@ impl Engine {
         let mut valid_moves = Vec::new();
 
         let mut defenders = HashSet::new();
-        defenders.insert(self.get_king_position());
+        defenders.insert(if self.turn == Team::White { self.white_king_position } else { self.black_king_position });
 
         let in_check = !self.is_king_safe(|p| {
             defenders.insert(p);
@@ -316,15 +305,15 @@ impl Engine {
 
                     match piece.kind {
                         PieceKind::Queen => {
-                            self.slider_moves(piece_position, &rook_directions, &mut save_move);
-                            self.slider_moves(piece_position, &bishop_directions, &mut save_move);
+                            self.slider_moves(piece_position, &ROOK_DIRECTIONS, &mut save_move);
+                            self.slider_moves(piece_position, &BISHOP_DIRECTIONS, &mut save_move);
                         }
-                        PieceKind::Rook => self.slider_moves(piece_position, &rook_directions, &mut save_move),
-                        PieceKind::Bishop => self.slider_moves(piece_position, &bishop_directions, &mut save_move),
-                        PieceKind::Knight => self.jumper_moves(piece_position, &knight_jumps, &mut save_move),
+                        PieceKind::Rook => self.slider_moves(piece_position, &ROOK_DIRECTIONS, &mut save_move),
+                        PieceKind::Bishop => self.slider_moves(piece_position, &BISHOP_DIRECTIONS, &mut save_move),
+                        PieceKind::Knight => self.jumper_moves(piece_position, &KNIGHT_JUMPS, &mut save_move),
                         PieceKind::Pawn => self.pawn_moves(piece_position, &mut save_move),
                         PieceKind::King => {
-                            self.jumper_moves(piece_position, &king_jumps, &mut save_move);
+                            self.jumper_moves(piece_position, &KING_JUMPS, &mut save_move);
                             let left1 = piece_position + Position(-1, 0);
                             let left2 = piece_position + Position(-2, 0);
                             let left3 = piece_position + Position(-3, 0);
@@ -335,9 +324,9 @@ impl Engine {
                             let king_position = Position(4, if self.turn == Team::White { 7 } else { 0 });
 
                             if !in_check
-                                && Engine::in_bounds(right1)
+                                && Engine::in_bounds(&right1)
                                 && self.get_piece(right1).is_none()
-                                && Engine::in_bounds(right2)
+                                && Engine::in_bounds(&right2)
                                 && self.get_piece(right2).is_none()
                                 && !self.history.iter().any(|m| m.from == right_rook || m.to == king_position)
                                 && !self.uncovers_king(Move { from: piece_position, to: right1 })
@@ -346,11 +335,11 @@ impl Engine {
                                 save_move(Move { from: piece_position, to: right2 }, &None);
                             }
                             if !in_check
-                                && Engine::in_bounds(left1)
+                                && Engine::in_bounds(&left1)
                                 && self.get_piece(left1).is_none()
-                                && Engine::in_bounds(left2)
+                                && Engine::in_bounds(&left2)
                                 && self.get_piece(left2).is_none()
-                                && Engine::in_bounds(left3)
+                                && Engine::in_bounds(&left3)
                                 && self.get_piece(left3).is_none()
                                 && !self.history.iter().any(|m| m.from == left_rook || m.to == king_position)
                                 && !self.uncovers_king(Move { from: piece_position, to: left1 })
@@ -378,8 +367,9 @@ impl Engine {
         valid_moves
     }
 
-    fn in_bounds(Position(file, rank): Position) -> bool {
-        (0..8).contains(&file) && (0..8).contains(&rank)
+    #[profiling::function]
+    fn in_bounds(Position(file, rank): &Position) -> bool {
+        (0..8).contains(file) && (0..8).contains(rank)
     }
 
     fn is_pawn_first_move(&self, Position(_, rank): Position) -> bool {
@@ -387,14 +377,14 @@ impl Engine {
     }
 
     fn uncovers_king(&mut self, m: Move) -> bool {
-        // Set up new board
+        // Set up new board, order is important
         let undo = self.make_move(m);
         self.toggle_turn();
 
         // Ckecks the king's safety
         let is_invalid = !self.is_king_safe(|_| {});
 
-        // Restores the board
+        // Restores the board order is important
         self.undo_move(undo);
         self.toggle_turn();
 
@@ -407,6 +397,12 @@ impl Engine {
 
         let original = self.get_piece(m.from).expect("This should never be empty");
         let target = *self.get_piece(m.to);
+
+        if m.from == self.white_king_position {
+            self.white_king_position = m.to;
+        } else if m.from == self.black_king_position {
+            self.black_king_position = m.to;
+        }
 
         if target.is_some() {
             self.speakers.play_sound(&self.capture_sound);
@@ -445,6 +441,12 @@ impl Engine {
             UndoAction::Move(m, p) => {
                 *self.get_piece_mut(m.from) = self.get_piece_mut(m.to).take();
                 *self.get_piece_mut(m.to) = p;
+
+                if m.to == self.white_king_position {
+                    self.white_king_position = m.from;
+                } else if m.to == self.black_king_position {
+                    self.black_king_position = m.from;
+                }
             }
             UndoAction::Enpasant(m) => {
                 *self.get_piece_mut(m.from) = self.get_piece_mut(m.to).take();
@@ -459,6 +461,12 @@ impl Engine {
                     *self.get_piece_mut(Position(0, m.to.1)) = self.get_piece_mut(Position(3, m.to.1)).take();
                 } else {
                     *self.get_piece_mut(Position(7, m.to.1)) = self.get_piece_mut(Position(5, m.to.1)).take();
+                }
+
+                if m.to == self.white_king_position {
+                    self.white_king_position = m.from;
+                } else if m.to == self.black_king_position {
+                    self.black_king_position = m.from;
                 }
             }
             UndoAction::Promotion(m, p) => {
@@ -495,7 +503,7 @@ impl Engine {
     fn draw_checker_pattern(&self, d: &mut RaylibDrawHandle) {
         for file in 0..8 {
             for rank in 0..8 {
-                d.draw_rectangle(file * piece_size, rank * piece_size, piece_size, piece_size, if (file + rank) % 2 == 0 { light } else { dark })
+                d.draw_rectangle(file * PIECE_SIZE, rank * PIECE_SIZE, PIECE_SIZE, PIECE_SIZE, if (file + rank) % 2 == 0 { LIGHT } else { DARK })
             }
         }
     }
@@ -504,7 +512,7 @@ impl Engine {
         for file in 0..8 {
             for rank in 0..8 {
                 if let Some(piece) = self.get_piece(Position(file, rank)) {
-                    let x = piece_size
+                    let x = PIECE_SIZE
                         * match piece.kind {
                             PieceKind::Pawn => 5,
                             PieceKind::Rook => 4,
@@ -513,15 +521,15 @@ impl Engine {
                             PieceKind::Queen => 1,
                             PieceKind::King => 0,
                         };
-                    let y = if piece.team == Team::White { 0 } else { piece_size };
+                    let y = if piece.team == Team::White { 0 } else { PIECE_SIZE };
 
-                    let color = if self.selected == Some(Position(file, rank)) && self.moving { transparent } else { white };
+                    let color = if self.selected == Some(Position(file, rank)) && self.moving { TRANSPARENT } else { WHITE };
                     d.draw_texture_rec(
                         &self.sprite_sheet,
-                        Rectangle::new(x as f32, y as f32, piece_size as f32, piece_size as f32),
+                        Rectangle::new(x as f32, y as f32, PIECE_SIZE as f32, PIECE_SIZE as f32),
                         Vector2 {
-                            x: file as f32 * piece_size as f32,
-                            y: rank as f32 * piece_size as f32,
+                            x: file as f32 * PIECE_SIZE as f32,
+                            y: rank as f32 * PIECE_SIZE as f32,
                         },
                         color,
                     );
@@ -536,9 +544,9 @@ impl Engine {
                 if m.from == selected {
                     // TODO: If there is a piece to eat dont use a circle, use something else
                     if self.hovered == m.to {
-                        d.draw_rectangle(m.to.0 * piece_size, m.to.1 * piece_size, piece_size, piece_size, green);
+                        d.draw_rectangle(m.to.0 * PIECE_SIZE, m.to.1 * PIECE_SIZE, PIECE_SIZE, PIECE_SIZE, GREEN);
                     } else {
-                        d.draw_circle(m.to.0 * piece_size + (piece_size / 2), m.to.1 * piece_size + (piece_size / 2), (piece_size / 8) as f32, green);
+                        d.draw_circle(m.to.0 * PIECE_SIZE + (PIECE_SIZE / 2), m.to.1 * PIECE_SIZE + (PIECE_SIZE / 2), (PIECE_SIZE / 8) as f32, GREEN);
                     }
                 }
             }
@@ -546,12 +554,12 @@ impl Engine {
             if self.moving {
                 let mp = d.get_mouse_position();
                 let position = Vector2 {
-                    x: mp.x - (piece_size / 2) as f32,
-                    y: mp.y - (piece_size / 2) as f32,
+                    x: mp.x - (PIECE_SIZE / 2) as f32,
+                    y: mp.y - (PIECE_SIZE / 2) as f32,
                 };
                 let piece = self.get_piece(selected).expect("Fuck");
                 // TODO: Extract the match instead of repeating it
-                let x = piece_size
+                let x = PIECE_SIZE
                     * match piece.kind {
                         PieceKind::Pawn => 5,
                         PieceKind::Rook => 4,
@@ -560,8 +568,8 @@ impl Engine {
                         PieceKind::Queen => 1,
                         PieceKind::King => 0,
                     };
-                let y = if piece.team == Team::White { 0 } else { piece_size };
-                d.draw_texture_rec(&self.sprite_sheet, Rectangle::new(x as f32, y as f32, piece_size as f32, piece_size as f32), position, white);
+                let y = if piece.team == Team::White { 0 } else { PIECE_SIZE };
+                d.draw_texture_rec(&self.sprite_sheet, Rectangle::new(x as f32, y as f32, PIECE_SIZE as f32, PIECE_SIZE as f32), position, WHITE);
             }
         }
     }

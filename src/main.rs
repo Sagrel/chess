@@ -6,7 +6,7 @@ use engine::*;
 fn main() {
 
 
-    let (mut rl, thread) = raylib::init().size(piece_size * 8, piece_size * 8).title("Chess").build();
+    let (mut rl, thread) = raylib::init().size(PIECE_SIZE * 8, PIECE_SIZE * 8).title("Chess").build();
 
     let mut engine = Engine::new(&mut rl, &thread);
     let mut valid_moves = engine.calculate_valid_moves();
@@ -54,8 +54,8 @@ fn main() {
 }
 
 fn get_position_form_pixels(mouse_position: Vector2) -> Position {
-    let file = mouse_position.x as i32 / piece_size;
-    let rank = mouse_position.y as i32 / piece_size;
+    let file = mouse_position.x as i32 / PIECE_SIZE;
+    let rank = mouse_position.y as i32 / PIECE_SIZE;
 
     Position(i32::min(file, 7), i32::min(rank, 7))
 }
