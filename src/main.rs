@@ -2,34 +2,10 @@ use raylib::prelude::*;
 mod engine;
 mod test;
 use engine::*;
-/*
-fn do_all_moves(depth: usize, engine: &mut Engine, rl: &mut RaylibHandle, thread: &RaylibThread) -> usize {
-    if depth == 0 {
-        return 1;
-    }
-
-    let mut count = 0;
-    let valid_moves = engine.calculate_valid_moves();
-    for m in &valid_moves {
-        let undo = engine.make_move(*m);
-        {
-            let mut d = rl.begin_drawing(thread);
-            engine.draw_board(&mut d, &valid_moves);
-        }
-
-        count += do_all_moves(depth - 1, engine, rl, thread);
-        engine.undo_move(undo);
-        {
-            let mut d = rl.begin_drawing(thread);
-            engine.draw_board(&mut d, &valid_moves);
-        }
-    }
-
-    count
-}
-*/
 
 fn main() {
+
+
     let (mut rl, thread) = raylib::init().size(piece_size * 8, piece_size * 8).title("Chess").build();
 
     let mut engine = Engine::new(&mut rl, &thread);

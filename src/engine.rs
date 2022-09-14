@@ -16,7 +16,7 @@ const light: Color = Color { r: 235, g: 210, b: 183, a: 255 };
 const dark: Color = Color { r: 148, g: 102, b: 83, a: 255 };
 const green: Color = Color { r: 130, g: 151, b: 105, a: 180 };
 pub const piece_size: i32 = 45;
-const starting_position: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"; //"1nbqkbnr/pppppppp/8/r3PK2/8/8/PPPP1PPP/RNBQ1BNR w k - 0 1";
+const starting_position: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const rook_directions: [Position; 4] = [Position(-1, 0), Position(1, 0), Position(0, 1), Position(0, -1)];
 const bishop_directions: [Position; 4] = [Position(1, 1), Position(1, -1), Position(-1, 1), Position(-1, -1)];
 const knight_jumps: [Position; 8] = [
@@ -35,7 +35,7 @@ const king_jumps: [Position; 8] = [
     Position(0, -1),
     Position(-1, -1),
     Position(-1, 0),
-    Position(1, 1),
+    Position(-1, 1),
     Position(0, 1),
     Position(1, 1),
 ];
@@ -160,6 +160,7 @@ impl Engine {
         &mut self.board[file as usize + rank as usize * 8]
     }
 
+    #[profiling::function]
     fn get_king_position(&self) -> Position {
         for file in 0..8 {
             for rank in 0..8 {
@@ -173,6 +174,7 @@ impl Engine {
         unreachable!()
     }
 
+    #[profiling::function]
     fn slider_moves(&self, origin: Position, directions: &[Position], save_move: &mut impl FnMut(Move, &Option<Piece>)) {
         for &direction in directions {
             let mut current = origin + direction;
@@ -190,6 +192,7 @@ impl Engine {
         }
     }
 
+    #[profiling::function]
     fn jumper_moves(&self, origin: Position, ofsets: &[Position], save_move: &mut impl FnMut(Move, &Option<Piece>)) {
         for &offset in ofsets {
             let current = origin + offset;
@@ -199,6 +202,7 @@ impl Engine {
         }
     }
 
+    #[profiling::function]
     fn pawn_moves(&self, origin: Position, save_move: &mut impl FnMut(Move, &Option<Piece>)) {
         let direction = if self.turn == Team::White { Position(0, -1) } else { Position(0, 1) };
 
@@ -223,7 +227,7 @@ impl Engine {
                     let m = Move { from: origin, to: attack_left };
                     save_move(m, &None);
                 }
-            } else if self.did_enpasant(move_left) {
+            } else if self.pawn_did_double_move(move_left) {
                 let m = Move { from: origin, to: attack_left };
                 save_move(m, &None);
             }
@@ -235,46 +239,48 @@ impl Engine {
                     let m = Move { from: origin, to: attack_right };
                     save_move(m, &None);
                 }
-            } else if self.did_enpasant(move_right) {
+            } else if self.pawn_did_double_move(move_right) {
                 let m = Move { from: origin, to: attack_right };
                 save_move(m, &None);
             }
         }
     }
 
+    #[profiling::function]
     fn is_king_safe(&self, mut save_defender: impl FnMut(Position)) -> bool {
-        let king_position = self.get_king_position();
         let mut safe = true;
 
+        let position = self.get_king_position();
+
         // Check rooks and queens
-        self.slider_moves(king_position, &rook_directions, &mut |m: Move, piece: &Option<Piece>| match piece {
+        self.slider_moves(position, &rook_directions, &mut |m: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team == self.turn => save_defender(m.to),
             Some(piece) if piece.team != self.turn && (piece.kind == PieceKind::Rook || piece.kind == PieceKind::Queen) => safe = false,
             _ => (),
         });
 
         // Check bishops and queens
-        self.slider_moves(king_position, &bishop_directions, &mut |m: Move, piece: &Option<Piece>| match piece {
+        self.slider_moves(position, &bishop_directions, &mut |m: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team == self.turn => save_defender(m.to),
             Some(piece) if piece.team != self.turn && (piece.kind == PieceKind::Bishop || piece.kind == PieceKind::Queen) => safe = false,
             _ => (),
         });
 
         // Check knights
-        self.jumper_moves(king_position, &knight_jumps, &mut |_: Move, piece: &Option<Piece>| match piece {
+        self.jumper_moves(position, &knight_jumps, &mut |_: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team != self.turn && piece.kind == PieceKind::Knight => safe = false,
             _ => (),
         });
 
         // Check enemy king
-        self.jumper_moves(king_position, &king_jumps, &mut |_: Move, piece: &Option<Piece>| match piece {
+        self.jumper_moves(position, &king_jumps, &mut |_: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team != self.turn && piece.kind == PieceKind::King => safe = false,
             _ => (),
         });
 
         // Check pawns
         let moves = &if self.turn == Team::White { white_pawn_attacks } else { black_pawn_attacks };
-        self.jumper_moves(king_position, moves, &mut |_: Move, piece: &Option<Piece>| match piece {
+        self.jumper_moves(position, moves, &mut |_: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team != self.turn && piece.kind == PieceKind::Pawn => safe = false,
             _ => (),
         });
@@ -282,6 +288,7 @@ impl Engine {
         safe
     }
 
+    #[profiling::function]
     pub fn calculate_valid_moves(&mut self) -> Vec<Move> {
         let mut valid_moves = Vec::new();
 
@@ -325,13 +332,14 @@ impl Engine {
                             let right2 = piece_position + Position(2, 0);
                             let left_rook = Position(0, piece_position.1);
                             let right_rook = Position(7, piece_position.1);
+                            let king_position = Position(4, if self.turn == Team::White { 7 } else { 0 });
 
                             if !in_check
                                 && Engine::in_bounds(right1)
                                 && self.get_piece(right1).is_none()
                                 && Engine::in_bounds(right2)
                                 && self.get_piece(right2).is_none()
-                                && !self.history.iter().any(|m| m.from == right_rook || m.to == piece_position)
+                                && !self.history.iter().any(|m| m.from == right_rook || m.to == king_position)
                                 && !self.uncovers_king(Move { from: piece_position, to: right1 })
                                 && !self.uncovers_king(Move { from: piece_position, to: right2 })
                             {
@@ -344,7 +352,7 @@ impl Engine {
                                 && self.get_piece(left2).is_none()
                                 && Engine::in_bounds(left3)
                                 && self.get_piece(left3).is_none()
-                                && !self.history.iter().any(|m| m.from == left_rook || m.to == piece_position)
+                                && !self.history.iter().any(|m| m.from == left_rook || m.to == king_position)
                                 && !self.uncovers_king(Move { from: piece_position, to: left1 })
                                 && !self.uncovers_king(Move { from: piece_position, to: left2 })
                             {
@@ -393,6 +401,7 @@ impl Engine {
         is_invalid
     }
 
+    #[profiling::function]
     pub fn make_move(&mut self, m: Move) -> UndoAction {
         self.selected = None;
 
@@ -430,6 +439,7 @@ impl Engine {
         undo_action
     }
 
+    #[profiling::function]
     pub fn undo_move(&mut self, action: UndoAction) {
         match action {
             UndoAction::Move(m, p) => {
@@ -468,9 +478,12 @@ impl Engine {
         self.turn = if self.turn == Team::White { Team::Black } else { Team::White };
     }
 
-    fn did_enpasant(&self, p: Position) -> bool {
+    fn pawn_did_double_move(&self, p: Position) -> bool {
         let offset = if self.turn == Team::White { Position(0, -2) } else { Position(0, 2) };
-        return self.history.last() == Some(&Move { from: p + offset, to: p });
+        match self.get_piece(p) {
+            Some(piece) => piece.kind == PieceKind::Pawn && self.history.last() == Some(&Move { from: p + offset, to: p }),
+            _ => false,
+        }
     }
 
     pub fn draw_board(&self, d: &mut RaylibDrawHandle, valid_moves: &[Move]) {
