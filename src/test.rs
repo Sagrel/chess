@@ -11,7 +11,7 @@ mod tests {
 
         let mut count = 0;
         for m in engine.calculate_valid_moves() {
-            let undo = engine.make_move(m);
+            let undo = engine.make_move(m, false);
 
             count += do_all_moves(depth - 1, engine);
 

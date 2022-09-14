@@ -377,7 +377,7 @@ impl Engine {
 
     fn uncovers_king(&mut self, m: Move) -> bool {
         // Set up new board
-        let undo = self.make_move(m);
+        let undo = self.make_move(m, false);
         self.toggle_turn();
 
         // Ckecks the king's safety
@@ -391,7 +391,7 @@ impl Engine {
     }
 
     #[profiling::function]
-    pub fn make_move(&mut self, m: Move) -> UndoAction {
+    pub fn make_move(&mut self, m: Move, play_sound: bool) -> UndoAction {
         self.selected = None;
 
         let original = self.get_piece(m.from).expect("This should never be empty");
@@ -402,11 +402,13 @@ impl Engine {
         } else if m.from == self.black_king_position {
             self.black_king_position = m.to;
         }
-
-        if target.is_some() {
-            self.speakers.play_sound(&self.capture_sound);
-        } else {
-            self.speakers.play_sound(&self.move_sound);
+        if play_sound {
+            // TODO: Play the correct sounds for castling, enpasant and promotion
+            if target.is_some() {
+                self.speakers.play_sound(&self.capture_sound);
+            } else {
+                self.speakers.play_sound(&self.move_sound);
+            }
         }
         self.toggle_turn();
         self.history.push(m);
@@ -476,7 +478,7 @@ impl Engine {
             }
         };
 
-        // TODO Play undo sound
+        // TODO Play undo sound if wanted
         self.toggle_turn();
         self.history.pop();
     }

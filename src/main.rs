@@ -32,13 +32,13 @@ fn main() {
             if let Some(selected) = engine.selected {
                 let movement = Move { from: selected, to: engine.hovered };
                 if valid_moves.iter().any(|m| m == &movement) {
-                    undo_last = Some(engine.make_move(movement));
+                    undo_last = Some(engine.make_move(movement, true));
                     valid_moves = engine.calculate_valid_moves();
                 }
             }
         }
         if d.is_key_pressed(KeyboardKey::KEY_R) {
-            //engine = Engine::new(&mut rl, &thread);
+            // TODO reset board engine = Engine::new(&mut rl, &thread);
         }
         if d.is_key_pressed(KeyboardKey::KEY_U) {
             if let Some(undo) = undo_last.take() {
