@@ -2,12 +2,12 @@ use std::{collections::HashSet, ops::Mul};
 
 use derive_more::{Add, AddAssign};
 use raylib::{
-    audio::RaylibAudio,
     ffi::Vector2,
-    prelude::{Color, RaylibDraw, RaylibDrawHandle, Rectangle, Sound},
+    prelude::{Color, RaylibDraw, RaylibDrawHandle, Rectangle},
     texture::Texture2D,
-    RaylibHandle, RaylibThread,
 };
+
+use crate::{GameState, SoundType};
 
 const TRANSPARENT: Color = Color { r: 255, g: 255, b: 255, a: 100 };
 const WHITE: Color = Color { r: 255, g: 255, b: 255, a: 255 };
@@ -91,34 +91,20 @@ pub enum UndoAction {
 pub struct Engine {
     pub board: [Option<Piece>; 8 * 8],
     history: Vec<Move>,
-    pub selected: Option<Position>,
-    pub hovered: Position,
-    pub moving: bool,
+
     pub turn: Team,
     white_king_position: Position,
     black_king_position: Position,
-
-    sprite_sheet: Texture2D,
-    move_sound: Sound,
-    capture_sound: Sound,
-    speakers: RaylibAudio,
 }
 
 impl Engine {
-    pub fn new(rl: &mut RaylibHandle, thread: &RaylibThread) -> Self {
+    pub fn new() -> Self {
         let mut engine = Engine {
             board: [None; 8 * 8],
             history: Vec::new(),
-            selected: None,
-            hovered: Position(0, 0),
-            moving: false,
             turn: Team::White,
             white_king_position: Position(4, 7),
             black_king_position: Position(4, 0),
-            sprite_sheet: rl.load_texture(thread, "assets/Chess_Pieces_Sprite.png").expect("Could not load piece textures"),
-            speakers: RaylibAudio::init_audio_device(),
-            capture_sound: Sound::load_sound("assets/capture.mp3").expect("Could not load capture sound"),
-            move_sound: Sound::load_sound("assets/move.mp3").expect("Could not load move sound"),
         };
 
         engine.load_position_from_fen(STARTING_POSITION);
@@ -235,6 +221,8 @@ impl Engine {
         }
     }
 
+    // TODO SPEED Save only the defender pieces if they are actually protecting from an attack
+    // TODO SPEED Maybe have 2 function, one only checks if we are under attack and the other calculates what pieces are attacking us and where we need blockers
     #[profiling::function]
     fn is_king_safe(&self, mut save_defender: impl FnMut(Position)) -> bool {
         let mut safe = true;
@@ -353,9 +341,11 @@ impl Engine {
             }
         }
 
+        // TODO SPEED If in check, remove only the moves that do not kill the attacker or block their line of attack
         let needs_checking = |m: Move| in_check || defenders.contains(&m.from);
         valid_moves.retain(|&m| !needs_checking(m) || !self.uncovers_king(m));
 
+        // TODO take a lambda to handle the UI changes and playing a sound
         if valid_moves.is_empty() {
             if in_check {
                 println!("Checkmate");
@@ -377,7 +367,7 @@ impl Engine {
 
     fn uncovers_king(&mut self, m: Move) -> bool {
         // Set up new board
-        let undo = self.make_move(m, false);
+        let undo = self.make_move(m, &mut |_| {});
         self.toggle_turn();
 
         // Ckecks the king's safety
@@ -391,9 +381,7 @@ impl Engine {
     }
 
     #[profiling::function]
-    pub fn make_move(&mut self, m: Move, play_sound: bool) -> UndoAction {
-        self.selected = None;
-
+    pub fn make_move(&mut self, m: Move, play_sound: &mut impl FnMut(SoundType)) -> UndoAction {
         let original = self.get_piece(m.from).expect("This should never be empty");
         let target = *self.get_piece(m.to);
 
@@ -402,23 +390,18 @@ impl Engine {
         } else if m.from == self.black_king_position {
             self.black_king_position = m.to;
         }
-        if play_sound {
-            // TODO: Play the correct sounds for castling, enpasant and promotion
-            if target.is_some() {
-                self.speakers.play_sound(&self.capture_sound);
-            } else {
-                self.speakers.play_sound(&self.move_sound);
-            }
-        }
+
         self.toggle_turn();
         self.history.push(m);
 
         let undo_action = if original.kind == PieceKind::Pawn && m.to.0 != m.from.0 && target.is_none() {
             self.get_piece_mut(Position(m.to.0, m.from.1)).take();
+            play_sound(SoundType::Capture);
             UndoAction::Enpasant(m)
         } else if original.kind == PieceKind::Pawn && (m.to.1 == 0 || m.to.1 == 7) {
             // TODO Request the user
             self.get_piece_mut(m.from).as_mut().unwrap().kind = PieceKind::Queen;
+            play_sound(SoundType::Move);
             UndoAction::Promotion(m, target)
         } else if original.kind == PieceKind::King && (m.to.0 - m.from.0).abs() > 1 {
             if (m.to.0 - m.from.0).is_negative() {
@@ -426,8 +409,14 @@ impl Engine {
             } else {
                 *self.get_piece_mut(Position(5, m.to.1)) = self.get_piece_mut(Position(7, m.to.1)).take();
             }
+            play_sound(SoundType::Move);
             UndoAction::Castle(m)
         } else {
+            if target.is_some() {
+                play_sound(SoundType::Capture);
+            } else {
+                play_sound(SoundType::Move);
+            }
             UndoAction::Move(m, target)
         };
 
@@ -495,10 +484,10 @@ impl Engine {
         }
     }
 
-    pub fn draw_board(&self, d: &mut RaylibDrawHandle, valid_moves: &[Move]) {
+    pub fn draw_board(&self, state: &GameState, d: &mut RaylibDrawHandle, sprite_sheet: &Texture2D) {
         self.draw_checker_pattern(d);
-        self.draw_pieces(d);
-        self.draw_active_piece(d, valid_moves);
+        self.draw_pieces(state, d, sprite_sheet);
+        self.draw_active_piece(state, d, sprite_sheet);
     }
 
     fn draw_checker_pattern(&self, d: &mut RaylibDrawHandle) {
@@ -509,16 +498,16 @@ impl Engine {
         }
     }
 
-    fn draw_pieces(&self, d: &mut RaylibDrawHandle) {
+    fn draw_pieces(&self, state: &GameState, d: &mut RaylibDrawHandle, sprite_sheet: &Texture2D) {
         for file in 0..8 {
             for rank in 0..8 {
                 if let Some(piece) = self.get_piece(Position(file, rank)) {
                     let (x, y) = Engine::sprite_ofset(piece);
 
-                    let color = if self.selected == Some(Position(file, rank)) && self.moving { TRANSPARENT } else { WHITE };
+                    let color = if state.selected == Some(Position(file, rank)) && state.moving { TRANSPARENT } else { WHITE };
                     d.draw_texture_rec(
-                        &self.sprite_sheet,
-                        Rectangle::new(x as f32, y as f32, PIECE_SIZE as f32, PIECE_SIZE as f32),
+                        sprite_sheet,
+                        Rectangle::new(x, y, PIECE_SIZE as f32, PIECE_SIZE as f32),
                         Vector2 {
                             x: file as f32 * PIECE_SIZE as f32,
                             y: rank as f32 * PIECE_SIZE as f32,
@@ -526,6 +515,71 @@ impl Engine {
                         color,
                     );
                 }
+            }
+        }
+    }
+
+    fn draw_active_piece(&self, state: &GameState, d: &mut RaylibDrawHandle, sprite_sheet: &Texture2D) {
+        if let Some(selected) = state.selected {
+            for m in &state.valid_moves {
+                if m.from == selected {
+                    if state.hovered == m.to {
+                        d.draw_rectangle(m.to.0 * PIECE_SIZE, m.to.1 * PIECE_SIZE, PIECE_SIZE, PIECE_SIZE, GREEN);
+                    } else if self.get_piece(m.to).is_some() {
+                        let mut x = m.to.0 as f32 * PIECE_SIZE as f32;
+                        let mut y = m.to.1 as f32 * PIECE_SIZE as f32;
+                        let triangle_size = PIECE_SIZE as f32 / 4_f32;
+                        let empty_space = triangle_size * 3_f32;
+                        // Top left
+                        d.draw_triangle(Vector2 { x: x + triangle_size, y }, Vector2 { x, y }, Vector2 { x, y: y + triangle_size }, GREEN);
+                        x += empty_space;
+                        // Top right
+                        d.draw_triangle(
+                            Vector2 { x: x + triangle_size, y },
+                            Vector2 { x, y },
+                            Vector2 {
+                                x: x + triangle_size,
+                                y: y + triangle_size,
+                            },
+                            GREEN,
+                        );
+                        y += empty_space;
+                        // Botton right
+                        d.draw_triangle(
+                            Vector2 { x: x + triangle_size, y },
+                            Vector2 { x, y: y + triangle_size },
+                            Vector2 {
+                                x: x + triangle_size,
+                                y: y + triangle_size,
+                            },
+                            GREEN,
+                        );
+                        x -= empty_space;
+                        // Botton left
+                        d.draw_triangle(
+                            Vector2 { x, y },
+                            Vector2 { x, y: y + triangle_size },
+                            Vector2 {
+                                x: x + triangle_size,
+                                y: y + triangle_size,
+                            },
+                            GREEN,
+                        );
+                    } else {
+                        d.draw_circle(m.to.0 * PIECE_SIZE + (PIECE_SIZE / 2), m.to.1 * PIECE_SIZE + (PIECE_SIZE / 2), (PIECE_SIZE / 8) as f32, GREEN);
+                    }
+                }
+            }
+
+            if state.moving {
+                let mp = d.get_mouse_position();
+                let position = Vector2 {
+                    x: mp.x - (PIECE_SIZE / 2) as f32,
+                    y: mp.y - (PIECE_SIZE / 2) as f32,
+                };
+
+                let (x, y) = Engine::sprite_ofset(self.get_piece(selected).as_ref().unwrap());
+                d.draw_texture_rec(sprite_sheet, Rectangle::new(x, y, PIECE_SIZE as f32, PIECE_SIZE as f32), position, WHITE);
             }
         }
     }
@@ -542,31 +596,5 @@ impl Engine {
             };
         let y = if piece.team == Team::White { 0 } else { PIECE_SIZE };
         (x as f32, y as f32)
-    }
-
-    fn draw_active_piece(&self, d: &mut RaylibDrawHandle, valid_moves: &[Move]) {
-        if let Some(selected) = self.selected {
-            for m in valid_moves {
-                if m.from == selected {
-                    // TODO: If there is a piece to eat dont use a circle, use something else
-                    if self.hovered == m.to {
-                        d.draw_rectangle(m.to.0 * PIECE_SIZE, m.to.1 * PIECE_SIZE, PIECE_SIZE, PIECE_SIZE, GREEN);
-                    } else {
-                        d.draw_circle(m.to.0 * PIECE_SIZE + (PIECE_SIZE / 2), m.to.1 * PIECE_SIZE + (PIECE_SIZE / 2), (PIECE_SIZE / 8) as f32, GREEN);
-                    }
-                }
-            }
-
-            if self.moving {
-                let mp = d.get_mouse_position();
-                let position = Vector2 {
-                    x: mp.x - (PIECE_SIZE / 2) as f32,
-                    y: mp.y - (PIECE_SIZE / 2) as f32,
-                };
-
-                let (x, y) = Engine::sprite_ofset(self.get_piece(selected).as_ref().unwrap());
-                d.draw_texture_rec(&self.sprite_sheet, Rectangle::new(x as f32, y as f32, PIECE_SIZE as f32, PIECE_SIZE as f32), position, WHITE);
-            }
-        }
     }
 }
