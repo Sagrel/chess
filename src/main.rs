@@ -4,8 +4,6 @@ mod test;
 use engine::*;
 
 fn main() {
-
-
     let (mut rl, thread) = raylib::init().size(PIECE_SIZE * 8, PIECE_SIZE * 8).title("Chess").build();
 
     let mut engine = Engine::new(&mut rl, &thread);

@@ -8,9 +8,8 @@ edition = "2021"
 [dependencies]
 derive_more = "0.99.17"
 raylib = { version = "3.7" }
-profiling = "1.0.6"
+profiling = "1.0.6" # This only works with tracy 0.8.1
 
 
 [features]
-default = ["profiling/profile-with-tracy"]
 profile-with-tracy = ["profiling/profile-with-tracy"]

@@ -367,7 +367,6 @@ impl Engine {
         valid_moves
     }
 
-    #[profiling::function]
     fn in_bounds(Position(file, rank): &Position) -> bool {
         (0..8).contains(file) && (0..8).contains(rank)
     }

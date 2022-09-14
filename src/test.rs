@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use std::{thread, time::Duration};
 
-    use crate::engine::{PIECE_SIZE, Engine};
+    use crate::engine::{Engine, PIECE_SIZE};
 
     #[profiling::function]
     fn do_all_moves(depth: usize, engine: &mut Engine) -> usize {
@@ -26,16 +25,17 @@ mod tests {
     fn from_initial() {
         let (mut rl, thread) = raylib::init().size(PIECE_SIZE * 8, PIECE_SIZE * 8).title("Chess").build();
 
-        let mut engine = Engine::new(&mut rl, &thread);
-
-        use profiling::tracy_client;
-        tracy_client::Client::start();
-
-        profiling::register_thread!("Main Thread");
-        thread::sleep(Duration::from_secs(2));
         #[cfg(feature = "profile-with-tracy")]
         {
+            use std::{thread, time::Duration};
+
+            use profiling::tracy_client;
+            tracy_client::Client::start();
+
+            profiling::register_thread!("Main Thread");
+            thread::sleep(Duration::from_secs(2));
         }
+        let mut engine = Engine::new(&mut rl, &thread);
 
         assert_eq!(20, do_all_moves(1, &mut engine));
         assert_eq!(400, do_all_moves(2, &mut engine));
