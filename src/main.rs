@@ -54,7 +54,9 @@ fn main() {
     let sprite_sheet = rl.load_texture(&thread, "assets/Chess_Pieces_Sprite.png").expect("Could not load piece textures");
 
     // Game logic
-    let mut engine = Engine::new();
+    let mut engine = Engine::new("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8");
+
+    // TODO Keep state from king in check and draw a red tint on it
     let mut state = GameState {
         valid_moves: engine.calculate_valid_moves(),
         ..Default::default()
@@ -75,7 +77,7 @@ fn main() {
                     state.moving = false;
                 }
                 _ => match engine.get_piece(state.hovered) {
-                    Some(piece) if piece.team == engine.turn => {
+                    Some(piece) if piece.team == engine.state.turn => {
                         state.selected = Some(state.hovered);
                         state.moving = true;
                     }
@@ -96,7 +98,7 @@ fn main() {
             }
         }
         if d.is_key_pressed(KeyboardKey::KEY_R) {
-            engine = Engine::new();
+            engine = Engine::new(STARTING_POSITION);
             state = GameState {
                 valid_moves: engine.calculate_valid_moves(),
                 ..Default::default()

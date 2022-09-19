@@ -15,7 +15,7 @@ const LIGHT: Color = Color { r: 235, g: 210, b: 183, a: 255 };
 const DARK: Color = Color { r: 148, g: 102, b: 83, a: 255 };
 const GREEN: Color = Color { r: 130, g: 151, b: 105, a: 180 };
 pub const PIECE_SIZE: i32 = 45;
-const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+pub const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const ROOK_DIRECTIONS: [Position; 4] = [Position(-1, 0), Position(1, 0), Position(0, 1), Position(0, -1)];
 const BISHOP_DIRECTIONS: [Position; 4] = [Position(1, 1), Position(1, -1), Position(-1, 1), Position(-1, -1)];
 const KNIGHT_JUMPS: [Position; 8] = [
@@ -81,51 +81,77 @@ pub struct Move {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum UndoAction {
-    Move(Move, Option<Piece>),
-    Enpasant(Move),
-    Castle(Move),
-    Promotion(Move, Option<Piece>),
+pub struct State {
+    can_cattle_left_white: bool,
+    can_cattle_right_white: bool,
+    can_cattle_left_black: bool,
+    can_cattle_right_black: bool,
+    white_king_position: Position,
+    black_king_position: Position,
+    did_double_move: Option<Position>,
+    half_moves: usize, // TODO implement half moves
+    full_moves: usize, // TODO implement full moves
+    pub turn: Team,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UndoKind {
+    Move(Option<Piece>),
+    Enpasant,
+    Castle,
+    Promotion(Option<Piece>),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct UndoAction {
+    movement: Move,
+    state: State,
+    kind: UndoKind,
 }
 
 pub struct Engine {
     pub board: [Option<Piece>; 8 * 8],
-    history: Vec<Move>,
-
-    pub turn: Team,
-    white_king_position: Position,
-    black_king_position: Position,
+    pub state: State,
 }
 
 impl Engine {
-    pub fn new() -> Self {
+    pub fn new(fen: &str) -> Self {
         let mut engine = Engine {
             board: [None; 8 * 8],
-            history: Vec::new(),
-            turn: Team::White,
-            white_king_position: Position(4, 7),
-            black_king_position: Position(4, 0),
+            state: State {
+                half_moves: 0,
+                full_moves: 0,
+                turn: Team::White,
+                can_cattle_left_white: true,
+                can_cattle_right_white: true,
+                can_cattle_left_black: true,
+                can_cattle_right_black: true,
+                did_double_move: None,
+                white_king_position: Position(4, 7),
+                black_king_position: Position(4, 0),
+            },
         };
 
-        engine.load_position_from_fen(STARTING_POSITION);
+        engine.load_position_from_fen(fen);
 
         engine
     }
 
-    fn load_position_from_fen(&mut self, fen: &str) {
+    pub fn load_position_from_fen(&mut self, fen: &str) {
         let mut file = 0;
-        let mut rank = 7;
+        let mut rank = 0;
 
-        for c in fen.chars() {
-            if c == ' ' {
-                break;
-            } else if c == '/' {
+        let mut fields = fen.split_ascii_whitespace();
+
+        // Set piece positions
+        for c in fields.next().unwrap().chars() {
+            if c == '/' {
                 file = 0;
-                rank -= 1;
+                rank += 1;
             } else if let Some(n) = c.to_digit(10) {
                 file += n as i32;
             } else {
-                let team = if c.is_uppercase() { Team::Black } else { Team::White };
+                let team = if c.is_uppercase() { Team::White } else { Team::Black };
                 let kind = match c.to_ascii_lowercase() {
                     'k' => PieceKind::King,
                     'p' => PieceKind::Pawn,
@@ -139,6 +165,42 @@ impl Engine {
                 file += 1;
             }
         }
+
+        // Set turn
+        match fields.next() {
+            Some("w") => self.state.turn = Team::White,
+            Some("b") => self.state.turn = Team::Black,
+            _ => unreachable!(),
+        }
+
+        // Set casttling rights
+        for c in fields.next().unwrap().chars() {
+            match c {
+                'K' => self.state.can_cattle_right_black = true,
+                'Q' => self.state.can_cattle_left_black = true,
+                'k' => self.state.can_cattle_right_white = true,
+                'q' => self.state.can_cattle_left_white = true,
+                '-' => {
+                    self.state.can_cattle_right_black = false;
+                    self.state.can_cattle_left_black = false;
+                    self.state.can_cattle_right_white = false;
+                    self.state.can_cattle_left_white = false;
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        self.state.did_double_move = fields.next().map(Engine::algebraic_notation_to_position);
+
+        self.state.half_moves = fields.next().unwrap().parse().unwrap();
+
+        self.state.full_moves = fields.next().unwrap().parse().unwrap();
+    }
+
+    // TODO Add unit tests for this
+    fn algebraic_notation_to_position(p: &str) -> Position {
+        let mut chars = p.chars();
+        Position(chars.next().unwrap() as i32 - 'a' as i32, chars.next().unwrap().to_digit(10).unwrap() as i32)
     }
 
     pub fn get_piece(&self, Position(file, rank): Position) -> &Option<Piece> {
@@ -179,7 +241,7 @@ impl Engine {
 
     #[profiling::function]
     fn pawn_moves(&self, origin: Position, save_move: &mut impl FnMut(Move, &Option<Piece>)) {
-        let direction = if self.turn == Team::White { Position(0, -1) } else { Position(0, 1) };
+        let direction = if self.state.turn == Team::White { Position(0, -1) } else { Position(0, 1) };
 
         let move_forward = origin + direction;
         let move_forward_two = move_forward + direction;
@@ -198,7 +260,7 @@ impl Engine {
 
         if Engine::in_bounds(&attack_left) {
             if let Some(piece) = self.get_piece(attack_left) {
-                if piece.team != self.turn {
+                if piece.team != self.state.turn {
                     let m = Move { from: origin, to: attack_left };
                     save_move(m, &None);
                 }
@@ -210,7 +272,7 @@ impl Engine {
 
         if Engine::in_bounds(&attack_right) {
             if let Some(piece) = self.get_piece(attack_right) {
-                if piece.team != self.turn {
+                if piece.team != self.state.turn {
                     let m = Move { from: origin, to: attack_right };
                     save_move(m, &None);
                 }
@@ -221,44 +283,50 @@ impl Engine {
         }
     }
 
+    fn get_king_position(&self) -> Position {
+        if self.state.turn == Team::White {
+            self.state.white_king_position
+        } else {
+            self.state.black_king_position
+        }
+    }
+
     // TODO SPEED Save only the defender pieces if they are actually protecting from an attack
     // TODO SPEED Maybe have 2 function, one only checks if we are under attack and the other calculates what pieces are attacking us and where we need blockers
     #[profiling::function]
-    fn is_king_safe(&self, mut save_defender: impl FnMut(Position)) -> bool {
+    fn is_position_safe(&self, position: Position, mut save_defender: impl FnMut(Position)) -> bool {
         let mut safe = true;
-
-        let position = if self.turn == Team::White { self.white_king_position } else { self.black_king_position };
 
         // Check rooks and queens
         self.slider_moves(position, &ROOK_DIRECTIONS, &mut |m: Move, piece: &Option<Piece>| match piece {
-            Some(piece) if piece.team == self.turn => save_defender(m.to),
-            Some(piece) if piece.team != self.turn && (piece.kind == PieceKind::Rook || piece.kind == PieceKind::Queen) => safe = false,
+            Some(piece) if piece.team == self.state.turn => save_defender(m.to),
+            Some(piece) if piece.team != self.state.turn && (piece.kind == PieceKind::Rook || piece.kind == PieceKind::Queen) => safe = false,
             _ => (),
         });
 
         // Check bishops and queens
         self.slider_moves(position, &BISHOP_DIRECTIONS, &mut |m: Move, piece: &Option<Piece>| match piece {
-            Some(piece) if piece.team == self.turn => save_defender(m.to),
-            Some(piece) if piece.team != self.turn && (piece.kind == PieceKind::Bishop || piece.kind == PieceKind::Queen) => safe = false,
+            Some(piece) if piece.team == self.state.turn => save_defender(m.to),
+            Some(piece) if piece.team != self.state.turn && (piece.kind == PieceKind::Bishop || piece.kind == PieceKind::Queen) => safe = false,
             _ => (),
         });
 
         // Check knights
         self.jumper_moves(position, &KNIGHT_JUMPS, &mut |_: Move, piece: &Option<Piece>| match piece {
-            Some(piece) if piece.team != self.turn && piece.kind == PieceKind::Knight => safe = false,
+            Some(piece) if piece.team != self.state.turn && piece.kind == PieceKind::Knight => safe = false,
             _ => (),
         });
 
         // Check enemy king
         self.jumper_moves(position, &KING_JUMPS, &mut |_: Move, piece: &Option<Piece>| match piece {
-            Some(piece) if piece.team != self.turn && piece.kind == PieceKind::King => safe = false,
+            Some(piece) if piece.team != self.state.turn && piece.kind == PieceKind::King => safe = false,
             _ => (),
         });
 
         // Check pawns
-        let moves = &if self.turn == Team::White { WHITE_PAWN_ATTACKS } else { BLACK_PAWN_ATTACKS };
+        let moves = &if self.state.turn == Team::White { WHITE_PAWN_ATTACKS } else { BLACK_PAWN_ATTACKS };
         self.jumper_moves(position, moves, &mut |_: Move, piece: &Option<Piece>| match piece {
-            Some(piece) if piece.team != self.turn && piece.kind == PieceKind::Pawn => safe = false,
+            Some(piece) if piece.team != self.state.turn && piece.kind == PieceKind::Pawn => safe = false,
             _ => (),
         });
 
@@ -270,13 +338,17 @@ impl Engine {
         let mut valid_moves = Vec::new();
 
         let mut defenders = HashSet::new();
-        defenders.insert(if self.turn == Team::White { self.white_king_position } else { self.black_king_position });
+        defenders.insert(if self.state.turn == Team::White {
+            self.state.white_king_position
+        } else {
+            self.state.black_king_position
+        });
 
-        let in_check = !self.is_king_safe(|p| {
+        let in_check = !self.is_position_safe(self.get_king_position(), |p| {
             defenders.insert(p);
         });
 
-        let turn = self.turn;
+        let turn = self.state.turn;
         let mut save_move = |m: Move, piece: &Option<Piece>| match piece {
             Some(piece) if piece.team == turn => (),
             _ => valid_moves.push(m),
@@ -287,7 +359,7 @@ impl Engine {
                 let piece_position = Position(file, rank);
 
                 if let Some(piece) = self.get_piece(piece_position) {
-                    if piece.team != self.turn {
+                    if piece.team != self.state.turn {
                         continue;
                     }
 
@@ -307,31 +379,31 @@ impl Engine {
                             let left3 = piece_position + Position(-3, 0);
                             let right1 = piece_position + Position(1, 0);
                             let right2 = piece_position + Position(2, 0);
-                            let left_rook = Position(0, piece_position.1);
-                            let right_rook = Position(7, piece_position.1);
-                            let king_position = Position(4, if self.turn == Team::White { 7 } else { 0 });
 
                             if !in_check
-                                && Engine::in_bounds(&right1)
+                                && if self.state.turn == Team::White {
+                                    self.state.can_cattle_right_white
+                                } else {
+                                    self.state.can_cattle_right_black
+                                }
                                 && self.get_piece(right1).is_none()
-                                && Engine::in_bounds(&right2)
                                 && self.get_piece(right2).is_none()
-                                && !self.history.iter().any(|m| m.from == right_rook || m.to == king_position)
-                                && !self.uncovers_king(Move { from: piece_position, to: right1 })
-                                && !self.uncovers_king(Move { from: piece_position, to: right2 })
+                                && self.is_position_safe(right1, |_| {})
+                                && self.is_position_safe(right2, |_| {})
                             {
                                 save_move(Move { from: piece_position, to: right2 }, &None);
                             }
                             if !in_check
-                                && Engine::in_bounds(&left1)
+                                && if self.state.turn == Team::White {
+                                    self.state.can_cattle_left_white
+                                } else {
+                                    self.state.can_cattle_left_black
+                                }
                                 && self.get_piece(left1).is_none()
-                                && Engine::in_bounds(&left2)
                                 && self.get_piece(left2).is_none()
-                                && Engine::in_bounds(&left3)
                                 && self.get_piece(left3).is_none()
-                                && !self.history.iter().any(|m| m.from == left_rook || m.to == king_position)
-                                && !self.uncovers_king(Move { from: piece_position, to: left1 })
-                                && !self.uncovers_king(Move { from: piece_position, to: left2 })
+                                && self.is_position_safe(left1, |_| {})
+                                && self.is_position_safe(left2, |_| {})
                             {
                                 save_move(Move { from: piece_position, to: left2 }, &None);
                             }
@@ -362,21 +434,26 @@ impl Engine {
     }
 
     fn is_pawn_first_move(&self, Position(_, rank): Position) -> bool {
-        (self.turn == Team::White && rank == 6) || (self.turn == Team::Black && rank == 1)
+        (self.state.turn == Team::White && rank == 6) || (self.state.turn == Team::Black && rank == 1)
     }
 
     fn uncovers_king(&mut self, m: Move) -> bool {
+        // TODO SPEED remove the copy of the board, it's only used to debug
+        let board = self.board;
         // Set up new board
         let undo = self.make_move(m, &mut |_| {});
         self.toggle_turn();
 
         // Ckecks the king's safety
-        let is_invalid = !self.is_king_safe(|_| {});
+        let is_invalid = !self.is_position_safe(self.get_king_position(), |_| {});
 
         // Restores the board
         self.undo_move(undo);
         self.toggle_turn();
 
+        if board != self.board {
+            println!("{undo:?}")
+        }
         is_invalid
     }
 
@@ -385,103 +462,111 @@ impl Engine {
         let original = self.get_piece(m.from).expect("This should never be empty");
         let target = *self.get_piece(m.to);
 
-        if m.from == self.white_king_position {
-            self.white_king_position = m.to;
-        } else if m.from == self.black_king_position {
-            self.black_king_position = m.to;
+        let old_state = self.state;
+
+        self.state.did_double_move = None;
+        if m.from == self.state.white_king_position {
+            self.state.white_king_position = m.to;
+            self.state.can_cattle_right_white = false;
+            self.state.can_cattle_left_white = false;
+        } else if m.from == self.state.black_king_position {
+            self.state.black_king_position = m.to;
+            self.state.can_cattle_right_black = false;
+            self.state.can_cattle_left_black = false;
+        } else if m.from == Position(0, 0) {
+            self.state.can_cattle_left_black = false;
+        } else if m.from == Position(7, 0) {
+            self.state.can_cattle_right_black = false;
+        } else if m.from == Position(0, 7) {
+            self.state.can_cattle_left_white = false;
+        } else if m.from == Position(7, 7) {
+            self.state.can_cattle_right_white = false;
         }
 
         self.toggle_turn();
-        self.history.push(m);
 
-        let undo_action = if original.kind == PieceKind::Pawn && m.to.0 != m.from.0 && target.is_none() {
+        // TODO FIXME Find a way to avoid checking if it's castling or some other shit
+        let undo_kind = if original.kind == PieceKind::Pawn && m.to.0 != m.from.0 && target.is_none() {
             self.get_piece_mut(Position(m.to.0, m.from.1)).take();
+
             play_sound(SoundType::Capture);
-            UndoAction::Enpasant(m)
+
+            UndoKind::Enpasant
         } else if original.kind == PieceKind::Pawn && (m.to.1 == 0 || m.to.1 == 7) {
-            // TODO Request the user
-            self.get_piece_mut(m.from).as_mut().unwrap().kind = PieceKind::Queen;
+            self.get_piece_mut(m.from).as_mut().unwrap().kind = PieceKind::Queen; // TODO FIXME Request the user
+
             play_sound(SoundType::Move);
-            UndoAction::Promotion(m, target)
-        } else if original.kind == PieceKind::King && (m.to.0 - m.from.0).abs() > 1 {
+
+            UndoKind::Promotion(target)
+        } else if original.kind == PieceKind::King && (m.to.0 - m.from.0).abs() > 1 && (m.from.1 == 0 || m.from.1 == 7) {
             if (m.to.0 - m.from.0).is_negative() {
                 *self.get_piece_mut(Position(3, m.to.1)) = self.get_piece_mut(Position(0, m.to.1)).take();
             } else {
                 *self.get_piece_mut(Position(5, m.to.1)) = self.get_piece_mut(Position(7, m.to.1)).take();
             }
+
             play_sound(SoundType::Move);
-            UndoAction::Castle(m)
+
+            UndoKind::Castle
         } else {
             if target.is_some() {
                 play_sound(SoundType::Capture);
             } else {
                 play_sound(SoundType::Move);
             }
-            UndoAction::Move(m, target)
+
+            if original.kind == PieceKind::Pawn && (m.to.1 - m.from.1).abs() > 2 {
+                self.state.did_double_move = Some(m.to);
+            }
+
+            UndoKind::Move(target)
         };
 
         *self.get_piece_mut(m.to) = self.get_piece_mut(m.from).take();
 
-        undo_action
+        UndoAction {
+            movement: m,
+            state: old_state,
+            kind: undo_kind,
+        }
     }
 
+    // TODO Play undo sound if wanted
     #[profiling::function]
     pub fn undo_move(&mut self, action: UndoAction) {
-        match action {
-            UndoAction::Move(m, p) => {
-                *self.get_piece_mut(m.from) = self.get_piece_mut(m.to).take();
-                *self.get_piece_mut(m.to) = p;
-
-                if m.to == self.white_king_position {
-                    self.white_king_position = m.from;
-                } else if m.to == self.black_king_position {
-                    self.black_king_position = m.from;
-                }
+        *self.get_piece_mut(action.movement.from) = self.get_piece_mut(action.movement.to).take();
+        match action.kind {
+            UndoKind::Move(p) => {
+                *self.get_piece_mut(action.movement.to) = p;
             }
-            UndoAction::Enpasant(m) => {
-                *self.get_piece_mut(m.from) = self.get_piece_mut(m.to).take();
-                *self.get_piece_mut(Position(m.to.0, m.from.1)) = Some(Piece {
+            UndoKind::Enpasant => {
+                *self.get_piece_mut(Position(action.movement.to.0, action.movement.from.1)) = Some(Piece {
                     kind: PieceKind::Pawn,
-                    team: if self.get_piece(m.from).unwrap().team == Team::White { Team::Black } else { Team::White },
+                    team: if action.state.turn == Team::White { Team::Black } else { Team::White },
                 });
             }
-            UndoAction::Castle(m) => {
-                *self.get_piece_mut(m.from) = self.get_piece_mut(m.to).take();
-                if (m.to.0 - m.from.0).is_negative() {
-                    *self.get_piece_mut(Position(0, m.to.1)) = self.get_piece_mut(Position(3, m.to.1)).take();
+            UndoKind::Castle => {
+                if (action.movement.to.0 - action.movement.from.0).is_negative() {
+                    *self.get_piece_mut(Position(0, action.movement.to.1)) = self.get_piece_mut(Position(3, action.movement.to.1)).take();
                 } else {
-                    *self.get_piece_mut(Position(7, m.to.1)) = self.get_piece_mut(Position(5, m.to.1)).take();
-                }
-
-                if m.to == self.white_king_position {
-                    self.white_king_position = m.from;
-                } else if m.to == self.black_king_position {
-                    self.black_king_position = m.from;
+                    *self.get_piece_mut(Position(7, action.movement.to.1)) = self.get_piece_mut(Position(5, action.movement.to.1)).take();
                 }
             }
-            UndoAction::Promotion(m, p) => {
-                let mut piece = self.get_piece_mut(m.to).take().unwrap();
-                piece.kind = PieceKind::Pawn;
-                *self.get_piece_mut(m.from) = Some(piece);
-                *self.get_piece_mut(m.to) = p;
+            UndoKind::Promotion(p) => {
+                self.get_piece_mut(action.movement.from).as_mut().unwrap().kind = PieceKind::Pawn;
+                *self.get_piece_mut(action.movement.to) = p;
             }
         };
 
-        // TODO Play undo sound if wanted
-        self.toggle_turn();
-        self.history.pop();
+        self.state = action.state;
     }
 
     fn toggle_turn(&mut self) {
-        self.turn = if self.turn == Team::White { Team::Black } else { Team::White };
+        self.state.turn = if self.state.turn == Team::White { Team::Black } else { Team::White };
     }
 
     fn pawn_did_double_move(&self, p: Position) -> bool {
-        let offset = if self.turn == Team::White { Position(0, -2) } else { Position(0, 2) };
-        match self.get_piece(p) {
-            Some(piece) => piece.kind == PieceKind::Pawn && self.history.last() == Some(&Move { from: p + offset, to: p }),
-            _ => false,
-        }
+        self.state.did_double_move == Some(p)
     }
 
     pub fn draw_board(&self, state: &GameState, d: &mut RaylibDrawHandle, sprite_sheet: &Texture2D) {
