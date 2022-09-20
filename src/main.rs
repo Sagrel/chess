@@ -1,8 +1,9 @@
+#![feature(if_let_guard)]
+
 use raylib::prelude::*;
 mod engine;
 mod test;
 use engine::*;
-
 pub enum SoundType {
     Move,
     Capture,
@@ -17,12 +18,14 @@ pub struct GameState {
     pub selected: Option<Position>,
     pub hovered: Position,
     pub moving: bool,
+    pub choosing_promotion: Option<Move>,
     pub undo_list: Vec<UndoAction>,
 }
 
 impl Default for GameState {
     fn default() -> Self {
         Self {
+            choosing_promotion: None,
             valid_moves: Vec::new(),
             selected: None,
             hovered: Position(0, 0),
@@ -68,51 +71,83 @@ fn main() {
         let mouse_position = d.get_mouse_position();
         state.hovered = get_position_form_pixels(mouse_position);
 
-        if d.is_mouse_button_pressed(MouseButton::MOUSE_LEFT_BUTTON) {
-            match state.selected {
-                Some(selected) if state.valid_moves.contains(&Move { from: selected, to: state.hovered }) => {
-                    state.undo_list.push(engine.make_move(Move { from: selected, to: state.hovered }, &mut play_sound));
+        if let Some(m) = state.choosing_promotion {
+            engine.draw_board(&state, &mut d, &sprite_sheet);
+            d.draw_rectangle(PIECE_SIZE * 2, PIECE_SIZE * 4, PIECE_SIZE * 4, PIECE_SIZE, Color::WHITE);
+            let clicked = d.is_mouse_button_pressed(MouseButton::MOUSE_LEFT_BUTTON);
+            for (i, kind) in [PieceKind::Bishop, PieceKind::Rook, PieceKind::Queen, PieceKind::Knight].iter().enumerate() {
+                let (x, y) = Engine::sprite_ofset(&Piece { kind: *kind, team: engine.state.turn });
+                let (x2, y2) = ((i + 2) as f32 * PIECE_SIZE as f32, 4_f32 * PIECE_SIZE as f32);
+                d.draw_texture_rec(&sprite_sheet, Rectangle::new(x, y, PIECE_SIZE as f32, PIECE_SIZE as f32), Vector2 { x: x2, y: y2 }, Color::WHITE);
+                if clicked && mouse_position.x > x2 && mouse_position.x < (x2 + PIECE_SIZE as f32) && mouse_position.y > y2 && mouse_position.y < (y2 + PIECE_SIZE as f32) {
+                    state.undo_list.push(engine.make_move(
+                        Move {
+                            from: m.from,
+                            to: m.to,
+                            kind: MoveKind::Promote(*kind),
+                        },
+                        &mut play_sound,
+                    ));
                     state.valid_moves = engine.calculate_valid_moves();
                     state.selected = None;
                     state.moving = false;
+                    state.choosing_promotion = None;
                 }
-                _ => match engine.get_piece(state.hovered) {
-                    Some(piece) if piece.team == engine.state.turn => {
-                        state.selected = Some(state.hovered);
-                        state.moving = true;
+            }
+        } else {
+            if d.is_mouse_button_pressed(MouseButton::MOUSE_LEFT_BUTTON) {
+                match state.selected {
+                    Some(selected) if let Some(m) = state.valid_moves.iter().find(|m| m.from == selected && m.to == state.hovered) => {
+                        if let MoveKind::Promote(_) = m.kind {
+                            state.choosing_promotion = Some(*m);
+                        } else {
+                            state.undo_list.push(engine.make_move(*m, &mut play_sound));
+                            state.valid_moves = engine.calculate_valid_moves();
+                            state.selected = None;
+                            state.moving = false;
+                        }
                     }
-                    _ => state.selected = None,
-                },
+                    _ => match engine.get_piece(state.hovered) {
+                        Some(piece) if piece.team == engine.state.turn => {
+                            state.selected = Some(state.hovered);
+                            state.moving = true;
+                        }
+                        _ => state.selected = None,
+                    },
+                }
             }
-        }
-        if d.is_mouse_button_released(MouseButton::MOUSE_LEFT_BUTTON) {
-            state.moving = false;
-            if let Some(selected) = state.selected {
-                let movement = Move { from: selected, to: state.hovered };
-                if state.valid_moves.iter().any(|m| m == &movement) {
-                    state.undo_list.push(engine.make_move(movement, &mut play_sound));
+            if d.is_mouse_button_released(MouseButton::MOUSE_LEFT_BUTTON) {
+                state.moving = false;
+                if let Some(selected) = state.selected {
+                    if let Some(m) = state.valid_moves.iter().find(|m| m.from == selected && m.to == state.hovered) {
+                        if let MoveKind::Promote(_) = m.kind {
+                            state.choosing_promotion = Some(*m);
+                        } else {
+                            state.undo_list.push(engine.make_move(*m, &mut play_sound));
+                            state.valid_moves = engine.calculate_valid_moves();
+                            state.selected = None;
+                            state.moving = false;
+                        }
+                    }
+                }
+            }
+            if d.is_key_pressed(KeyboardKey::KEY_R) {
+                engine = Engine::new(STARTING_POSITION);
+                state = GameState {
+                    valid_moves: engine.calculate_valid_moves(),
+                    ..Default::default()
+                };
+            } else if d.is_key_pressed(KeyboardKey::KEY_U) {
+                if let Some(undo) = state.undo_list.pop() {
+                    engine.undo_move(undo);
                     state.valid_moves = engine.calculate_valid_moves();
                     state.selected = None;
                     state.moving = false;
                 }
             }
-        }
-        if d.is_key_pressed(KeyboardKey::KEY_R) {
-            engine = Engine::new(STARTING_POSITION);
-            state = GameState {
-                valid_moves: engine.calculate_valid_moves(),
-                ..Default::default()
-            };
-        } else if d.is_key_pressed(KeyboardKey::KEY_U) {
-            if let Some(undo) = state.undo_list.pop() {
-                engine.undo_move(undo);
-                state.valid_moves = engine.calculate_valid_moves();
-                state.selected = None;
-                state.moving = false;
-            }
-        }
 
-        engine.draw_board(&state, &mut d, &sprite_sheet);
+            engine.draw_board(&state, &mut d, &sprite_sheet);
+        }
     }
 }
 

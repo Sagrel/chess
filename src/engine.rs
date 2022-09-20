@@ -78,6 +78,16 @@ pub struct Piece {
 pub struct Move {
     pub from: Position,
     pub to: Position,
+    pub kind: MoveKind,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MoveKind {
+    Normal,
+    Double,
+    Casttle,
+    Enpasant,
+    Promote(PieceKind),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -161,7 +171,13 @@ impl Engine {
                     'n' => PieceKind::Knight,
                     _ => unreachable!(),
                 };
-                *self.get_piece_mut(Position(file, rank)) = Some(Piece { kind, team });
+                let position = Position(file, rank);
+                if team == Team::White && kind == PieceKind::King {
+                    self.state.white_king_position = position
+                } else if team == Team::Black && kind == PieceKind::King {
+                    self.state.black_king_position = position
+                }
+                *self.get_piece_mut(position) = Some(Piece { kind, team });
                 file += 1;
             }
         }
@@ -190,7 +206,11 @@ impl Engine {
             }
         }
 
-        self.state.did_double_move = fields.next().map(Engine::algebraic_notation_to_position);
+        self.state.did_double_move = match fields.next() {
+            Some("-") => None,
+            Some(x) => Some(Engine::algebraic_notation_to_position(x)),
+            _ => unreachable!(),
+        };
 
         self.state.half_moves = fields.next().unwrap().parse().unwrap();
 
@@ -218,7 +238,14 @@ impl Engine {
 
             while Engine::in_bounds(&current) {
                 let piece = self.get_piece(current);
-                save_move(Move { from: origin, to: current }, piece);
+                save_move(
+                    Move {
+                        from: origin,
+                        to: current,
+                        kind: MoveKind::Normal,
+                    },
+                    piece,
+                );
 
                 if piece.is_some() {
                     break;
@@ -234,7 +261,14 @@ impl Engine {
         for &offset in ofsets {
             let current = origin + offset;
             if Engine::in_bounds(&current) {
-                save_move(Move { from: origin, to: current }, self.get_piece(current));
+                save_move(
+                    Move {
+                        from: origin,
+                        to: current,
+                        kind: MoveKind::Normal,
+                    },
+                    self.get_piece(current),
+                );
             }
         }
     }
@@ -250,35 +284,69 @@ impl Engine {
         let attack_left = move_forward + Position(-1, 0);
         let attack_right = move_forward + Position(1, 0);
 
+        let mut check_promotion = |target: Position, kind: MoveKind| {
+            if target.1 == 0 || target.1 == 7 {
+                save_move(
+                    Move {
+                        from: origin,
+                        to: target,
+                        kind: MoveKind::Promote(PieceKind::Bishop),
+                    },
+                    &None,
+                );
+                save_move(
+                    Move {
+                        from: origin,
+                        to: target,
+                        kind: MoveKind::Promote(PieceKind::Rook),
+                    },
+                    &None,
+                );
+                save_move(
+                    Move {
+                        from: origin,
+                        to: target,
+                        kind: MoveKind::Promote(PieceKind::Queen),
+                    },
+                    &None,
+                );
+                save_move(
+                    Move {
+                        from: origin,
+                        to: target,
+                        kind: MoveKind::Promote(PieceKind::Knight),
+                    },
+                    &None,
+                );
+            } else {
+                save_move(Move { from: origin, to: target, kind }, &None);
+            }
+        };
+
         if self.get_piece(move_forward).is_none() {
-            save_move(Move { from: origin, to: move_forward }, &None);
+            check_promotion(move_forward, MoveKind::Normal);
             if self.is_pawn_first_move(origin) && self.get_piece(move_forward_two).is_none() {
-                let m = Move { from: origin, to: move_forward_two };
-                save_move(m, &None);
+                check_promotion(move_forward_two, MoveKind::Double);
             }
         }
 
         if Engine::in_bounds(&attack_left) {
             if let Some(piece) = self.get_piece(attack_left) {
                 if piece.team != self.state.turn {
-                    let m = Move { from: origin, to: attack_left };
-                    save_move(m, &None);
+                    check_promotion(attack_left, MoveKind::Normal);
                 }
             } else if self.pawn_did_double_move(move_left) {
-                let m = Move { from: origin, to: attack_left };
-                save_move(m, &None);
+                check_promotion(attack_left, MoveKind::Enpasant);
             }
         }
 
         if Engine::in_bounds(&attack_right) {
             if let Some(piece) = self.get_piece(attack_right) {
                 if piece.team != self.state.turn {
-                    let m = Move { from: origin, to: attack_right };
-                    save_move(m, &None);
+                    check_promotion(attack_right, MoveKind::Normal);
                 }
             } else if self.pawn_did_double_move(move_right) {
-                let m = Move { from: origin, to: attack_right };
-                save_move(m, &None);
+                check_promotion(attack_right, MoveKind::Enpasant);
             }
         }
     }
@@ -391,7 +459,14 @@ impl Engine {
                                 && self.is_position_safe(right1, |_| {})
                                 && self.is_position_safe(right2, |_| {})
                             {
-                                save_move(Move { from: piece_position, to: right2 }, &None);
+                                save_move(
+                                    Move {
+                                        from: piece_position,
+                                        to: right2,
+                                        kind: MoveKind::Casttle,
+                                    },
+                                    &None,
+                                );
                             }
                             if !in_check
                                 && if self.state.turn == Team::White {
@@ -405,7 +480,14 @@ impl Engine {
                                 && self.is_position_safe(left1, |_| {})
                                 && self.is_position_safe(left2, |_| {})
                             {
-                                save_move(Move { from: piece_position, to: left2 }, &None);
+                                save_move(
+                                    Move {
+                                        from: piece_position,
+                                        to: left2,
+                                        kind: MoveKind::Casttle,
+                                    },
+                                    &None,
+                                );
                             }
                         }
                     }
@@ -459,7 +541,6 @@ impl Engine {
 
     #[profiling::function]
     pub fn make_move(&mut self, m: Move, play_sound: &mut impl FnMut(SoundType)) -> UndoAction {
-        let original = self.get_piece(m.from).expect("This should never be empty");
         let target = *self.get_piece(m.to);
 
         let old_state = self.state;
@@ -485,41 +566,47 @@ impl Engine {
 
         self.toggle_turn();
 
-        // TODO FIXME Find a way to avoid checking if it's castling or some other shit
-        let undo_kind = if original.kind == PieceKind::Pawn && m.to.0 != m.from.0 && target.is_none() {
-            self.get_piece_mut(Position(m.to.0, m.from.1)).take();
+        let undo_kind = match m.kind {
+            MoveKind::Normal => {
+                if target.is_some() {
+                    play_sound(SoundType::Capture);
+                } else {
+                    play_sound(SoundType::Move);
+                }
 
-            play_sound(SoundType::Capture);
-
-            UndoKind::Enpasant
-        } else if original.kind == PieceKind::Pawn && (m.to.1 == 0 || m.to.1 == 7) {
-            self.get_piece_mut(m.from).as_mut().unwrap().kind = PieceKind::Queen; // TODO FIXME Request the user
-
-            play_sound(SoundType::Move);
-
-            UndoKind::Promotion(target)
-        } else if original.kind == PieceKind::King && (m.to.0 - m.from.0).abs() > 1 && (m.from.1 == 0 || m.from.1 == 7) {
-            if (m.to.0 - m.from.0).is_negative() {
-                *self.get_piece_mut(Position(3, m.to.1)) = self.get_piece_mut(Position(0, m.to.1)).take();
-            } else {
-                *self.get_piece_mut(Position(5, m.to.1)) = self.get_piece_mut(Position(7, m.to.1)).take();
+                UndoKind::Move(target)
             }
-
-            play_sound(SoundType::Move);
-
-            UndoKind::Castle
-        } else {
-            if target.is_some() {
-                play_sound(SoundType::Capture);
-            } else {
-                play_sound(SoundType::Move);
-            }
-
-            if original.kind == PieceKind::Pawn && (m.to.1 - m.from.1).abs() > 2 {
+            MoveKind::Double => {
                 self.state.did_double_move = Some(m.to);
-            }
 
-            UndoKind::Move(target)
+                play_sound(SoundType::Move);
+
+                UndoKind::Move(target)
+            }
+            MoveKind::Casttle => {
+                if (m.to.0 - m.from.0).is_negative() {
+                    *self.get_piece_mut(Position(3, m.to.1)) = self.get_piece_mut(Position(0, m.to.1)).take();
+                } else {
+                    *self.get_piece_mut(Position(5, m.to.1)) = self.get_piece_mut(Position(7, m.to.1)).take();
+                }
+
+                play_sound(SoundType::Move);
+
+                UndoKind::Castle
+            }
+            MoveKind::Enpasant => {
+                self.get_piece_mut(Position(m.to.0, m.from.1)).take();
+
+                play_sound(SoundType::Capture);
+
+                UndoKind::Enpasant
+            }
+            MoveKind::Promote(kind) => {
+                self.get_piece_mut(m.from).as_mut().unwrap().kind = kind;
+
+                play_sound(SoundType::Move);
+                UndoKind::Promotion(target)
+            }
         };
 
         *self.get_piece_mut(m.to) = self.get_piece_mut(m.from).take();
@@ -669,7 +756,7 @@ impl Engine {
         }
     }
 
-    fn sprite_ofset(piece: &Piece) -> (f32, f32) {
+    pub fn sprite_ofset(piece: &Piece) -> (f32, f32) {
         let x = PIECE_SIZE
             * match piece.kind {
                 PieceKind::Pawn => 5,
