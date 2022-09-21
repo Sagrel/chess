@@ -1,19 +1,7 @@
 use std::{collections::HashSet, ops::Mul};
-
+mod test;
 use derive_more::{Add, AddAssign};
-use raylib::{
-    ffi::Vector2,
-    prelude::{Color, RaylibDraw, RaylibDrawHandle, Rectangle},
-    texture::Texture2D,
-};
 
-use crate::{GameState, SoundType};
-
-const TRANSPARENT: Color = Color { r: 255, g: 255, b: 255, a: 100 };
-const WHITE: Color = Color { r: 255, g: 255, b: 255, a: 255 };
-const LIGHT: Color = Color { r: 235, g: 210, b: 183, a: 255 };
-const DARK: Color = Color { r: 148, g: 102, b: 83, a: 255 };
-const GREEN: Color = Color { r: 130, g: 151, b: 105, a: 180 };
 pub const PIECE_SIZE: i32 = 45;
 pub const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const ROOK_DIRECTIONS: [Position; 4] = [Position(-1, 0), Position(1, 0), Position(0, 1), Position(0, -1)];
@@ -142,12 +130,88 @@ impl Engine {
             },
         };
 
-        engine.load_position_from_fen(fen);
+        engine.load_from_fen(fen);
 
         engine
     }
 
-    pub fn load_position_from_fen(&mut self, fen: &str) {
+    pub fn get_fen(&self) -> String {
+        let mut res = "".to_string();
+        let mut count = 0;
+        for rank in 0..8 {
+            for file in 0..8 {
+                let piece = self.get_piece(Position(file, rank));
+
+                if let Some(piece) = piece {
+                    if count != 0 {
+                        res += &count.to_string();
+                        count = 0;
+                    }
+                    let letter = match piece.kind {
+                        PieceKind::Pawn => "p",
+                        PieceKind::Rook => "r",
+                        PieceKind::Knight => "n",
+                        PieceKind::Bishop => "b",
+                        PieceKind::Queen => "q",
+                        PieceKind::King => "k",
+                    };
+                    res += &if piece.team == Team::White { letter.to_uppercase() } else { letter.to_lowercase() }
+                } else {
+                    count += 1;
+                }
+            }
+            if count != 0 {
+                res += &count.to_string();
+                count = 0;
+            }
+            res += "/"
+        }
+
+        res.pop();
+
+        res += " ";
+        res += if self.state.turn == Team::White { "w" } else { "b" };
+        res += " ";
+
+        let size = res.len();
+
+        if self.state.can_cattle_left_black {
+            res += "q";
+        }
+        if self.state.can_cattle_right_black {
+            res += "k";
+        }
+        if self.state.can_cattle_left_white {
+            res += "Q";
+        }
+        if self.state.can_cattle_right_white {
+            res += "K";
+        }
+
+        if res.len() == size {
+            res += "-"
+        }
+
+        res += " ";
+
+        if let Some(p) = self.state.did_double_move {
+            res += &Engine::position_to_algebraic_notation(p);
+        } else {
+            res += "-"
+        }
+
+        res += " ";
+
+        res += &self.state.half_moves.to_string();
+
+        res += " ";
+
+        res += &self.state.full_moves.to_string();
+
+        res
+    }
+
+    pub fn load_from_fen(&mut self, fen: &str) {
         let mut file = 0;
         let mut rank = 0;
 
@@ -217,10 +281,13 @@ impl Engine {
         self.state.full_moves = fields.next().unwrap().parse().unwrap();
     }
 
-    // TODO Add unit tests for this
+    // TODO Add unit tests for this 2 functions
     fn algebraic_notation_to_position(p: &str) -> Position {
         let mut chars = p.chars();
         Position(chars.next().unwrap() as i32 - 'a' as i32, chars.next().unwrap().to_digit(10).unwrap() as i32)
+    }
+    fn position_to_algebraic_notation(p: Position) -> String {
+        format!("{}{}", (b'a' + p.0 as u8) as char, (b'0' + p.1 as u8) as char)
     }
 
     pub fn get_piece(&self, Position(file, rank): Position) -> &Option<Piece> {
@@ -523,7 +590,7 @@ impl Engine {
         // TODO SPEED remove the copy of the board, it's only used to debug
         let board = self.board;
         // Set up new board
-        let undo = self.make_move(m, &mut |_| {});
+        let undo = self.make_move(m);
         self.toggle_turn();
 
         // Ckecks the king's safety
@@ -540,7 +607,7 @@ impl Engine {
     }
 
     #[profiling::function]
-    pub fn make_move(&mut self, m: Move, play_sound: &mut impl FnMut(SoundType)) -> UndoAction {
+    pub fn make_move(&mut self, m: Move) -> UndoAction {
         let target = *self.get_piece(m.to);
 
         let old_state = self.state;
@@ -567,19 +634,9 @@ impl Engine {
         self.toggle_turn();
 
         let undo_kind = match m.kind {
-            MoveKind::Normal => {
-                if target.is_some() {
-                    play_sound(SoundType::Capture);
-                } else {
-                    play_sound(SoundType::Move);
-                }
-
-                UndoKind::Move(target)
-            }
+            MoveKind::Normal => UndoKind::Move(target),
             MoveKind::Double => {
                 self.state.did_double_move = Some(m.to);
-
-                play_sound(SoundType::Move);
 
                 UndoKind::Move(target)
             }
@@ -590,21 +647,16 @@ impl Engine {
                     *self.get_piece_mut(Position(5, m.to.1)) = self.get_piece_mut(Position(7, m.to.1)).take();
                 }
 
-                play_sound(SoundType::Move);
-
                 UndoKind::Castle
             }
             MoveKind::Enpasant => {
                 self.get_piece_mut(Position(m.to.0, m.from.1)).take();
-
-                play_sound(SoundType::Capture);
 
                 UndoKind::Enpasant
             }
             MoveKind::Promote(kind) => {
                 self.get_piece_mut(m.from).as_mut().unwrap().kind = kind;
 
-                play_sound(SoundType::Move);
                 UndoKind::Promotion(target)
             }
         };
@@ -618,7 +670,6 @@ impl Engine {
         }
     }
 
-    // TODO Play undo sound if wanted
     #[profiling::function]
     pub fn undo_move(&mut self, action: UndoAction) {
         *self.get_piece_mut(action.movement.from) = self.get_piece_mut(action.movement.to).take();
@@ -654,119 +705,5 @@ impl Engine {
 
     fn pawn_did_double_move(&self, p: Position) -> bool {
         self.state.did_double_move == Some(p)
-    }
-
-    pub fn draw_board(&self, state: &GameState, d: &mut RaylibDrawHandle, sprite_sheet: &Texture2D) {
-        self.draw_checker_pattern(d);
-        self.draw_pieces(state, d, sprite_sheet);
-        self.draw_active_piece(state, d, sprite_sheet);
-    }
-
-    fn draw_checker_pattern(&self, d: &mut RaylibDrawHandle) {
-        for file in 0..8 {
-            for rank in 0..8 {
-                d.draw_rectangle(file * PIECE_SIZE, rank * PIECE_SIZE, PIECE_SIZE, PIECE_SIZE, if (file + rank) % 2 == 0 { LIGHT } else { DARK })
-            }
-        }
-    }
-
-    fn draw_pieces(&self, state: &GameState, d: &mut RaylibDrawHandle, sprite_sheet: &Texture2D) {
-        for file in 0..8 {
-            for rank in 0..8 {
-                if let Some(piece) = self.get_piece(Position(file, rank)) {
-                    let (x, y) = Engine::sprite_ofset(piece);
-
-                    let color = if state.selected == Some(Position(file, rank)) && state.moving { TRANSPARENT } else { WHITE };
-                    d.draw_texture_rec(
-                        sprite_sheet,
-                        Rectangle::new(x, y, PIECE_SIZE as f32, PIECE_SIZE as f32),
-                        Vector2 {
-                            x: file as f32 * PIECE_SIZE as f32,
-                            y: rank as f32 * PIECE_SIZE as f32,
-                        },
-                        color,
-                    );
-                }
-            }
-        }
-    }
-
-    fn draw_active_piece(&self, state: &GameState, d: &mut RaylibDrawHandle, sprite_sheet: &Texture2D) {
-        if let Some(selected) = state.selected {
-            for m in &state.valid_moves {
-                if m.from == selected {
-                    if state.hovered == m.to {
-                        d.draw_rectangle(m.to.0 * PIECE_SIZE, m.to.1 * PIECE_SIZE, PIECE_SIZE, PIECE_SIZE, GREEN);
-                    } else if self.get_piece(m.to).is_some() {
-                        let mut x = m.to.0 as f32 * PIECE_SIZE as f32;
-                        let mut y = m.to.1 as f32 * PIECE_SIZE as f32;
-                        let triangle_size = PIECE_SIZE as f32 / 4_f32;
-                        let empty_space = triangle_size * 3_f32;
-                        // Top left
-                        d.draw_triangle(Vector2 { x: x + triangle_size, y }, Vector2 { x, y }, Vector2 { x, y: y + triangle_size }, GREEN);
-                        x += empty_space;
-                        // Top right
-                        d.draw_triangle(
-                            Vector2 { x: x + triangle_size, y },
-                            Vector2 { x, y },
-                            Vector2 {
-                                x: x + triangle_size,
-                                y: y + triangle_size,
-                            },
-                            GREEN,
-                        );
-                        y += empty_space;
-                        // Botton right
-                        d.draw_triangle(
-                            Vector2 { x: x + triangle_size, y },
-                            Vector2 { x, y: y + triangle_size },
-                            Vector2 {
-                                x: x + triangle_size,
-                                y: y + triangle_size,
-                            },
-                            GREEN,
-                        );
-                        x -= empty_space;
-                        // Botton left
-                        d.draw_triangle(
-                            Vector2 { x, y },
-                            Vector2 { x, y: y + triangle_size },
-                            Vector2 {
-                                x: x + triangle_size,
-                                y: y + triangle_size,
-                            },
-                            GREEN,
-                        );
-                    } else {
-                        d.draw_circle(m.to.0 * PIECE_SIZE + (PIECE_SIZE / 2), m.to.1 * PIECE_SIZE + (PIECE_SIZE / 2), (PIECE_SIZE / 8) as f32, GREEN);
-                    }
-                }
-            }
-
-            if state.moving {
-                let mp = d.get_mouse_position();
-                let position = Vector2 {
-                    x: mp.x - (PIECE_SIZE / 2) as f32,
-                    y: mp.y - (PIECE_SIZE / 2) as f32,
-                };
-
-                let (x, y) = Engine::sprite_ofset(self.get_piece(selected).as_ref().unwrap());
-                d.draw_texture_rec(sprite_sheet, Rectangle::new(x, y, PIECE_SIZE as f32, PIECE_SIZE as f32), position, WHITE);
-            }
-        }
-    }
-
-    pub fn sprite_ofset(piece: &Piece) -> (f32, f32) {
-        let x = PIECE_SIZE
-            * match piece.kind {
-                PieceKind::Pawn => 5,
-                PieceKind::Rook => 4,
-                PieceKind::Knight => 3,
-                PieceKind::Bishop => 2,
-                PieceKind::Queen => 1,
-                PieceKind::King => 0,
-            };
-        let y = if piece.team == Team::White { 0 } else { PIECE_SIZE };
-        (x as f32, y as f32)
     }
 }

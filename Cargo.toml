@@ -1,15 +1,7 @@
-[package]
-name = "chess"
-version = "0.1.0"
-edition = "2021"
+[workspace]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-derive_more = "0.99.17"
-raylib = { version = "3.7" }
-profiling = "1.0.6" # This only works with tracy 0.8.1
-
-
-[features]
-profile-with-tracy = ["profiling/profile-with-tracy"]
+members = [
+    "chess_engine",
+    "chess_desktop",
+    "chess_web_api",
+]

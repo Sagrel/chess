@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
 
-    use crate::engine::{Engine, STARTING_POSITION};
+    use crate::{Engine, STARTING_POSITION};
 
     #[profiling::function]
     fn do_all_moves(depth: usize, engine: &mut Engine) -> usize {
@@ -11,7 +11,7 @@ mod tests {
 
         let mut count = 0;
         for m in engine.calculate_valid_moves() {
-            let undo = engine.make_move(m, &mut |_| {});
+            let undo = engine.make_move(m);
 
             count += do_all_moves(depth - 1, engine);
 
