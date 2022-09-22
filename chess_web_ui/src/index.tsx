@@ -1,6 +1,6 @@
 /* @refresh reload */
 import { render } from 'solid-js/web';
 
-import App from './App';
+import Board from './Board';
 
-render(() => <App />, document.getElementById('root') as HTMLElement);
+render(() => <Board />, document.getElementById('root') as HTMLElement);

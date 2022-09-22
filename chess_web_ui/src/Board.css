@@ -1,0 +1,20 @@
+.board {
+	display: grid;
+	grid-template-columns: repeat(8, 1fr);
+	width: fit-content;
+	height: fit-content;
+}
+
+.light {
+	background: rgb(235, 210, 183);
+}
+
+.dark {
+	background: rgb(148, 102, 83);
+}
+
+
+.square {
+	width: 45px;
+	aspect-ratio: 1/1;
+}

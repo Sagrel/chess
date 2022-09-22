@@ -6,6 +6,8 @@ export default defineConfig({
   server: {
     port: 3000,
   },
+  root: './',
+  publicDir: 'assets',
   build: {
     target: 'esnext',
   },
