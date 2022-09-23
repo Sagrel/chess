@@ -1,6 +1,7 @@
 use std::{collections::HashSet, ops::Mul};
 mod test;
 use derive_more::{Add, AddAssign};
+use serde::{Deserialize, Serialize};
 
 pub const PIECE_SIZE: i32 = 45;
 pub const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -36,7 +37,7 @@ impl Mul<i32> for Position {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PieceKind {
     Pawn,
     Rook,
@@ -46,30 +47,30 @@ pub enum PieceKind {
     King,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Team {
     White,
     Black,
 }
 
 // TODO give names
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Add, AddAssign)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Add, AddAssign, Serialize, Deserialize)]
 pub struct Position(pub i32, pub i32);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Piece {
     pub kind: PieceKind,
     pub team: Team,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Move {
     pub from: Position,
     pub to: Position,
     pub kind: MoveKind,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum MoveKind {
     Normal,
     Double,
@@ -78,7 +79,7 @@ pub enum MoveKind {
     Promote(PieceKind),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct State {
     can_cattle_left_white: bool,
     can_cattle_right_white: bool,
@@ -92,7 +93,7 @@ pub struct State {
     pub turn: Team,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum UndoKind {
     Move(Option<Piece>),
     Enpasant,
@@ -100,7 +101,7 @@ pub enum UndoKind {
     Promotion(Option<Piece>),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct UndoAction {
     movement: Move,
     state: State,
