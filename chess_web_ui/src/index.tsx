@@ -1,21 +1,16 @@
-/* @refresh reload */
-import { createSignal, Match, Suspense, Switch } from 'solid-js';
-import { render } from 'solid-js/web';
-
+import { useState } from 'react';
 import Board from './Board';
 import Home from './Home';
 
-render(() => {
-	const [gameId, setGameId] = createSignal(null)
+const Index = () => {
+	const [gameId, setGameId] = useState<null | string>(null)
 
 	return (
-		<Switch>
-			<Match when={gameId() == null}>
-				<Home setGameID={setGameId} />
-			</Match>
-			<Match when={gameId() != null}>
-				<Board gameId={gameId} />
-			</Match>
-		</Switch >
+		gameId == null ?
+			<Home setGameID={setGameId} />
+			:
+			<Board gameId={gameId} />
 	)
-}, document.getElementById('root') as HTMLElement);
+}
+
+export default Index;

@@ -1,0 +1,11 @@
+.selected {
+	background: rgba(130, 151, 105, 180);
+}
+
+.attacked {
+	background: rgba(130, 151, 105, 180);
+}
+
+.movable {
+	background: rgba(130, 151, 105, 180);
+}

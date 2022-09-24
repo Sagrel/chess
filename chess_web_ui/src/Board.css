@@ -1,20 +1,27 @@
 .board {
 	display: grid;
 	grid-template-columns: repeat(8, 1fr);
+	background-image: url("/board.svg");
+
 	width: fit-content;
 	height: fit-content;
-}
-
-.light {
-	background: rgb(235, 210, 183);
-}
-
-.dark {
-	background: rgb(148, 102, 83);
 }
 
 
 .square {
 	width: 45px;
-	aspect-ratio: 1/1;
+	aspect-ratio: 1 / 1;
+	display: flex;
+}
+
+.square.selected {
+	background: rgba(20, 85, 30, 0.5);
+}
+
+.square.movable {
+	background: radial-gradient(rgba(20, 85, 30, 0.5) 19%, rgba(0, 0, 0, 0) 20%);
+}
+
+.square.attacked {
+	background: radial-gradient(transparent 0%, transparent 79%, rgba(20, 85, 0, 0.3) 80%)
 }
