@@ -55,6 +55,10 @@ const Board = ({ gameId }: { gameId: string }) => {
     () => {
       const socket = new WebSocket(ws);
 
+      socket.addEventListener("error", (event) => {
+        console.error(event)
+      })
+
       socket.addEventListener('open', (event) => {
         socket.send(gameId);
       });

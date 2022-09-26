@@ -17,8 +17,6 @@ use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use uuid::Uuid;
 
-// TODO Find out if clone is needed
-
 struct Game {
     engine: Engine,
     undo: Vec<UndoAction>,
@@ -34,7 +32,6 @@ async fn main() {
     let state = Arc::new(AppState { games: Mutex::new(HashMap::new()) });
     // TODO Revisit Router::with_state_arc.
     let app = Router::with_state(state)
-        .route("/", get(root))
         .route("/initial_position", get(initial_position))
         .route("/create_game", get(create_game))
         .route("/game_exists/:id", get(game_exists))
@@ -46,12 +43,8 @@ async fn main() {
         .layer(CorsLayer::permissive());
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
+    
     axum::Server::bind(&addr).serve(app.into_make_service()).await.unwrap();
-}
-
-// basic handler that responds with a static string
-async fn root() -> &'static str {
-    "Hello, World!"
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -59,6 +52,8 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
 }
 
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
+    println!("client connected");
+
     if let Some(msg) = socket.recv().await {
         if let Ok(Message::Text(id)) = msg {
             let mut games = state.games.lock().await;
@@ -68,6 +63,8 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 1 => "Black",
                 _ => "Espectator",
             };
+            println!("client role: {}", role);
+
             socket
                 .send(Message::Text(
                     json!({"board": Vec::from(game.engine.board), "turn": game.engine.state.turn, "moves": game.engine.calculate_valid_moves(), "role":role}).to_string(),
