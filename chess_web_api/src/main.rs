@@ -43,7 +43,7 @@ async fn main() {
         .layer(CorsLayer::permissive());
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
-    
+
     axum::Server::bind(&addr).serve(app.into_make_service()).await.unwrap();
 }
 
@@ -54,27 +54,23 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     println!("client connected");
 
-    if let Some(msg) = socket.recv().await {
-        if let Ok(Message::Text(id)) = msg {
-            let mut games = state.games.lock().await;
-            let game = games.get_mut(&Uuid::from_str(&id).unwrap()).unwrap();
-            let role = match game.listeners.len() {
-                0 => "White",
-                1 => "Black",
-                _ => "Espectator",
-            };
-            println!("client role: {}", role);
+    if let Some(Ok(Message::Text(id))) = socket.recv().await {
+        let mut games = state.games.lock().await;
+        let game = games.get_mut(&Uuid::from_str(&id).unwrap()).unwrap();
+        let role = match game.listeners.len() {
+            0 => "White",
+            1 => "Black",
+            _ => "Espectator",
+        };
+        println!("client role: {}", role);
 
-            socket
-                .send(Message::Text(
-                    json!({"board": Vec::from(game.engine.board), "turn": game.engine.state.turn, "moves": game.engine.calculate_valid_moves(), "role":role}).to_string(),
-                ))
-                .await
-                .unwrap();
-            game.listeners.push(socket);
-        } else {
-            println!("client disconnected");
-        }
+        socket
+            .send(Message::Text(
+                json!({"board": Vec::from(game.engine.board), "turn": game.engine.state.turn, "moves": game.engine.calculate_valid_moves(), "role":role}).to_string(),
+            ))
+            .await
+            .unwrap();
+        game.listeners.push(socket);
     }
 }
 
@@ -86,12 +82,16 @@ async fn initial_position() -> impl IntoResponse {
 #[debug_handler]
 async fn make_move(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, Json(m): Json<Move>) -> impl IntoResponse {
     if let Some(game) = state.games.lock().await.get_mut(&id) {
+        let turn_old = game.engine.state.turn;
         game.undo.push(game.engine.make_move(m));
+        let board = Vec::from(game.engine.board);
+        let turn = game.engine.state.turn;
+        let moves = game.engine.calculate_valid_moves();
+        let turn_newer = game.engine.state.turn;
+        println!("Old: {:?}, New: {:?}, After valid moves: {:?}", turn_old, turn, turn_newer);
         for listener in &mut game.listeners {
             listener
-                .send(Message::Text(
-                    json!({"board": Vec::from(game.engine.board), "turn": game.engine.state.turn, "moveKind": m.kind, "moves": game.engine.calculate_valid_moves()}).to_string(),
-                ))
+                .send(Message::Text(json!({"board": board, "turn": turn, "moveKind": m.kind, "moves": moves }).to_string()))
                 .await
                 .unwrap();
         }

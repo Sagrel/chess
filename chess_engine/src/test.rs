@@ -37,11 +37,11 @@ mod tests {
 
         assert_eq!(20, do_all_moves(1, &mut engine));
         assert_eq!(400, do_all_moves(2, &mut engine));
-        assert_eq!(8902, do_all_moves(3, &mut engine)); // FIXME fails with 8895
+        assert_eq!(8902, do_all_moves(3, &mut engine)); 
         assert_eq!(197281, do_all_moves(4, &mut engine));
         assert_eq!(4865609, do_all_moves(5, &mut engine));
-        //assert_eq!(119060324, do_all_moves(6, &mut engine));
-        //assert_eq!(3195901860, do_all_moves(7, &mut engine)); // FIXME Fails with 3196082118
+        assert_eq!(119060324, do_all_moves(6, &mut engine));
+        assert_eq!(3195901860, do_all_moves(7, &mut engine)); // FIXME Fails with 3196082118
     }
 
     // https://www.chessprogramming.org/Perft_Results#Position_5

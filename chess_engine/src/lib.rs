@@ -599,7 +599,6 @@ impl Engine {
 
         // Restores the board
         self.undo_move(undo);
-        self.toggle_turn();
 
         if board != self.board {
             println!("{undo:?}")

@@ -65,7 +65,7 @@ const Board = ({ gameId }: { gameId: string }) => {
 
       socket.addEventListener('message', (event) => {
         const { role, turn, board, moveKind, moves } = JSON.parse(event.data);
-
+        console.log(turn)
         if (role) setRole(role)
         if (turn) setTurn(turn)
         if (board) setBoard(board)
