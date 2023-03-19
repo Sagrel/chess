@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 struct Game {
     engine: Engine,
-    undo: Vec<UndoAction>,
+    undo: Vec<Undo>,
     listeners: Vec<WebSocket>,
 }
 
@@ -66,7 +66,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
 
         socket
             .send(Message::Text(
-                json!({"board": Vec::from(game.engine.board), "turn": game.engine.state.turn, "moves": game.engine.calculate_valid_moves(), "role":role}).to_string(),
+                json!({"board": Vec::from(game.engine.board), "turn": game.engine.state.turn, "moves": game.engine.legal_moves(), "role":role}).to_string(),
             ))
             .await
             .unwrap();
@@ -83,10 +83,10 @@ async fn initial_position() -> impl IntoResponse {
 async fn make_move(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, Json(m): Json<Move>) -> impl IntoResponse {
     if let Some(game) = state.games.lock().await.get_mut(&id) {
         let turn_old = game.engine.state.turn;
-        game.undo.push(game.engine.make_move(m));
+        game.undo.push(game.engine.make_undoable_move(m));
         let board = Vec::from(game.engine.board);
         let turn = game.engine.state.turn;
-        let moves = game.engine.calculate_valid_moves();
+        let moves = game.engine.legal_moves();
         let turn_newer = game.engine.state.turn;
         println!("Old: {:?}, New: {:?}, After valid moves: {:?}", turn_old, turn, turn_newer);
         for listener in &mut game.listeners {
@@ -108,7 +108,7 @@ async fn undo_move(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> 
         for listener in &mut game.listeners {
             listener
                 .send(Message::Text(
-                    json!({"board": Vec::from(game.engine.board), "turn": game.engine.state.turn, "moveKind": "Undo", "moves": game.engine.calculate_valid_moves()}).to_string(),
+                    json!({"board": Vec::from(game.engine.board), "turn": game.engine.state.turn, "moveKind": "Undo", "moves": game.engine.legal_moves()}).to_string(),
                 ))
                 .await
                 .unwrap();
@@ -121,7 +121,7 @@ async fn undo_move(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> 
 #[debug_handler]
 async fn get_moves(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> impl IntoResponse {
     if let Some(game) = state.games.lock().await.get_mut(&id) {
-        (StatusCode::OK, Json(game.engine.calculate_valid_moves())).into_response()
+        (StatusCode::OK, Json(game.engine.legal_moves())).into_response()
     } else {
         StatusCode::BAD_REQUEST.into_response()
     }

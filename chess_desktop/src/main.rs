@@ -16,14 +16,13 @@ const LIGHT: Color = Color { r: 235, g: 210, b: 183, a: 255 };
 const DARK: Color = Color { r: 148, g: 102, b: 83, a: 255 };
 const GREEN: Color = Color { r: 130, g: 151, b: 105, a: 180 };
 
-// TODO move everything into GameState and then just in main create it and run everything in a loop
 pub struct GameState {
     pub valid_moves: Vec<Move>,
     pub selected: Option<Position>,
     pub hovered: Position,
     pub moving: bool,
     pub choosing_promotion: Option<Move>,
-    pub undo_list: Vec<UndoAction>,
+    pub undo_list: Vec<Undo>,
 }
 
 impl Default for GameState {
@@ -57,7 +56,7 @@ fn draw_pieces(engine: &Engine, state: &GameState, d: &mut RaylibDrawHandle, spr
     for file in 0..8 {
         for rank in 0..8 {
             if let Some(piece) = engine.get_piece(Position(file, rank)) {
-                let (x, y) = sprite_ofset(piece);
+                let (x, y) = sprite_offset(piece);
 
                 let color = if state.selected == Some(Position(file, rank)) && state.moving { TRANSPARENT } else { WHITE };
                 d.draw_texture_rec(
@@ -133,13 +132,13 @@ fn draw_active_piece(engine: &Engine, state: &GameState, d: &mut RaylibDrawHandl
                 y: mp.y - (PIECE_SIZE / 2) as f32,
             };
 
-            let (x, y) = sprite_ofset(engine.get_piece(selected).as_ref().unwrap());
+            let (x, y) = sprite_offset(engine.get_piece(selected).as_ref().unwrap());
             d.draw_texture_rec(sprite_sheet, Rectangle::new(x, y, PIECE_SIZE as f32, PIECE_SIZE as f32), position, WHITE);
         }
     }
 }
 
-fn sprite_ofset(piece: &Piece) -> (f32, f32) {
+fn sprite_offset(piece: &Piece) -> (f32, f32) {
     let x = PIECE_SIZE
         * match piece.kind {
             PieceKind::Pawn => 5,
@@ -149,31 +148,29 @@ fn sprite_ofset(piece: &Piece) -> (f32, f32) {
             PieceKind::Queen => 1,
             PieceKind::King => 0,
         };
-    let y = if piece.team == Team::White { 0 } else { PIECE_SIZE };
+    let y = if piece.color == chess_engine::Color::White { 0 } else { PIECE_SIZE };
     (x as f32, y as f32)
 }
 
 fn play_sound(engine: &Engine, speakers: &mut RaylibAudio, m: &Move, capture: &Sound, movement: &Sound) {
-    speakers.play_sound(if m.kind == MoveKind::Enpasant || engine.get_piece(m.to).is_some() { capture } else { movement })
+    speakers.play_sound(if m.kind == MoveKind::EnPassant || engine.get_piece(m.to).is_some() { capture } else { movement })
 }
 
 fn make_move(engine: &mut Engine, state: &mut GameState, speakers: &mut RaylibAudio, m: &Move, capture: &Sound, movement: &Sound, notify: &Sound) {
     play_sound(engine, speakers, m, capture, movement);
 
-    state.undo_list.push(engine.make_move(*m));
-    state.valid_moves = engine.calculate_valid_moves();
+    state.undo_list.push(engine.make_undoable_move(*m));
+    state.valid_moves = match engine.legal_moves()  {
+        Outcome::Checkmate | Outcome::Drowned => {speakers.play_sound(notify); Vec::new()},
+        Outcome::Continue(moves) => moves,
+    };
     state.selected = None;
     state.moving = false;
     state.choosing_promotion = None;
-
-    // TODO Handle sounds for drowned king, check and ckeckmate
-    if state.valid_moves.is_empty() {
-        speakers.play_sound(notify);
-    }
 }
 
 fn main() {
-    // Initilize raylib
+    // Initialize raylib
     let (mut rl, thread) = raylib::init().size(PIECE_SIZE * 8, PIECE_SIZE * 8).title("Chess").build();
 
     // Sound
@@ -190,7 +187,7 @@ fn main() {
 
     // TODO Keep state from king in check and draw a red tint on it
     let mut state = GameState {
-        valid_moves: engine.calculate_valid_moves(),
+        valid_moves: engine.legal_moves(),
         ..Default::default()
     };
 
@@ -205,7 +202,10 @@ fn main() {
             d.draw_rectangle(PIECE_SIZE * 2, PIECE_SIZE * 4, PIECE_SIZE * 4, PIECE_SIZE, Color::WHITE);
             let clicked = d.is_mouse_button_pressed(MouseButton::MOUSE_LEFT_BUTTON);
             for (i, kind) in [PieceKind::Bishop, PieceKind::Rook, PieceKind::Queen, PieceKind::Knight].iter().enumerate() {
-                let (x, y) = sprite_ofset(&Piece { kind: *kind, team: engine.state.turn });
+                let (x, y) = sprite_offset(&Piece {
+                    kind: *kind,
+                    color: engine.state.turn,
+                });
                 let (x2, y2) = ((i + 2) as f32 * PIECE_SIZE as f32, 4_f32 * PIECE_SIZE as f32);
                 d.draw_texture_rec(&sprite_sheet, Rectangle::new(x, y, PIECE_SIZE as f32, PIECE_SIZE as f32), Vector2 { x: x2, y: y2 }, Color::WHITE);
                 if clicked && mouse_position.x > x2 && mouse_position.x < (x2 + PIECE_SIZE as f32) && mouse_position.y > y2 && mouse_position.y < (y2 + PIECE_SIZE as f32) {
@@ -235,7 +235,7 @@ fn main() {
                         }
                     }
                     _ => match engine.get_piece(state.hovered) {
-                        Some(piece) if piece.team == engine.state.turn => {
+                        Some(piece) if piece.color == engine.state.turn => {
                             state.selected = Some(state.hovered);
                             state.moving = true;
                         }
@@ -258,13 +258,13 @@ fn main() {
             if d.is_key_pressed(KeyboardKey::KEY_R) {
                 engine = Engine::new(STARTING_POSITION);
                 state = GameState {
-                    valid_moves: engine.calculate_valid_moves(),
+                    valid_moves: engine.legal_moves(),
                     ..Default::default()
                 };
             } else if d.is_key_pressed(KeyboardKey::KEY_U) {
                 if let Some(undo) = state.undo_list.pop() {
                     engine.undo_move(undo);
-                    state.valid_moves = engine.calculate_valid_moves();
+                    state.valid_moves = engine.legal_moves();
                     state.selected = None;
                     state.moving = false;
                 }
