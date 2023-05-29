@@ -7,5 +7,10 @@ edition = "2021"
 
 [dependencies]
 derive_more = "0.99.17"
-serde = { version = "1.0.144", features = ["derive"] }
+serde = { version = "1.0.145", features = ["derive"] }
+propane = "0.1.0"
 
+
+[profile.test] 
+opt-level = 3
+debug=true

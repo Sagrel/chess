@@ -160,10 +160,13 @@ fn make_move(engine: &mut Engine, state: &mut GameState, speakers: &mut RaylibAu
     play_sound(engine, speakers, m, capture, movement);
 
     state.undo_list.push(engine.make_undoable_move(*m));
+    state.valid_moves = engine.legal_moves().0;
+    /* TODO
     state.valid_moves = match engine.legal_moves()  {
         Outcome::Checkmate | Outcome::Drowned => {speakers.play_sound(notify); Vec::new()},
         Outcome::Continue(moves) => moves,
     };
+    */
     state.selected = None;
     state.moving = false;
     state.choosing_promotion = None;
@@ -183,11 +186,12 @@ fn main() {
     let sprite_sheet = rl.load_texture(&thread, "assets/Chess_Pieces_Sprite.png").expect("Could not load piece textures");
 
     // Game logic
-    let mut engine = Engine::new(STARTING_POSITION);
+    //let mut engine = Engine::new(STARTING_POSITION);
+    let mut engine = Engine::new("rn3k1r/pB2bppp/2p5/8/2B5/3q4/PPP1NnPP/RNBQK2R b KQ - 1 8");
 
     // TODO Keep state from king in check and draw a red tint on it
     let mut state = GameState {
-        valid_moves: engine.legal_moves(),
+        valid_moves: engine.legal_moves().0,
         ..Default::default()
     };
 
@@ -258,13 +262,13 @@ fn main() {
             if d.is_key_pressed(KeyboardKey::KEY_R) {
                 engine = Engine::new(STARTING_POSITION);
                 state = GameState {
-                    valid_moves: engine.legal_moves(),
+                    valid_moves: engine.legal_moves().0,
                     ..Default::default()
                 };
             } else if d.is_key_pressed(KeyboardKey::KEY_U) {
                 if let Some(undo) = state.undo_list.pop() {
                     engine.undo_move(undo);
-                    state.valid_moves = engine.legal_moves();
+                    state.valid_moves = engine.legal_moves().0;
                     state.selected = None;
                     state.moving = false;
                 }
